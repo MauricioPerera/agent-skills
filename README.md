@@ -174,6 +174,8 @@ The spec is **specified** (not just documented) — two implementations satisfy 
 
 Both produce **identical scores to 4 decimal places** on the canonical benchmark (34/35 top-1 = 97.1 %, 35/35 top-3 = 100 %, mean margin +0.175, identical sole failure on the same paraphrase). If a third implementation produces different numbers on the same setup, either it's doing something different or it has found a spec gap — that's the point of having two.
 
+The parity is **continuously validated** by [`agent-skills-cli`'s `e2e.yml` workflow](https://github.com/MauricioPerera/agent-skills-cli/actions/workflows/e2e.yml), which runs both implementations against the same Ollama setup on every push and weekly via cron, and fails if their numerical results ever diverge.
+
 ## Sister projects
 
 - [`agent-skills-cli`](https://github.com/MauricioPerera/agent-skills-cli) — **reference TypeScript CLI**. Ships the full agent loop (validate, resolve, sync, query, exec, audit) with intent-conditional rerank by default; `bench` (v0.7.0+) for reproducible retrieval evaluation; `publish` (v0.8.0+) for pack authors; `init` (v0.9.0+) to scaffold a new pack; `update` (v0.11.0+) to refresh subscribed packs + GC orphans; signed-tag verification (v0.10.0+). Multi-provider embeddings: Cloudflare Workers AI, Ollama (local), OpenAI / OpenAI-compatible.
