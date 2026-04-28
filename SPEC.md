@@ -1,11 +1,13 @@
 # agent-skills — Specification
 
-**Version**: 0.3.2 (draft)
+**Version**: 0.3.3 (draft)
 **Status**: Open for comment. Schema and protocol are subject to change before v1.0.0.
 
-**Schema version** (the value embedded in `SKILL.md` files): still `"0.1"` — v0.3 (and the v0.3.1 / v0.3.2 patches) are purely additive. No breaking changes to the SKILL.md format. v0.2.x banks remain conformant.
+**Schema version** (the value embedded in `SKILL.md` files): still `"0.1"` — v0.3 (and the v0.3.1 / v0.3.2 / v0.3.3 patches) are purely additive. No breaking changes to the SKILL.md format. v0.2.x banks remain conformant.
 
-**v0.3.2** widens `provenance.signature_method` to `"gpg" | "ssh" | "sigstore"` (§5.1). The reference CLI v0.15.0 ships SSH-tag detection. The same patch documents the **Sigstore-on-host trap**: a properly-signed Sigstore tag may legitimately receive a `bad_cert` verdict from the host once the short-lived Fulcio cert expires, so a `"sigstore"`-method tag with `status: "invalid"` is **ambiguous** without client-side Rekor verification (Level 4) — *not* equivalent to "forged".
+**v0.3.3** adds an optional `provenance.signature_identity` field for `"sigstore"`-method tags (§5.1). The Fulcio cert's Subject Alternative Name (SAN) carries the OIDC subject (email or workflow URI) and Fulcio extension OID `1.3.6.1.4.1.57264.1.1` (or `.1.8`) carries the OIDC issuer. Banks SHOULD surface both. The reference CLI v0.16.0 ships extraction (cross-impl parity validated continuously). **Extraction is not verification**: the identity is what the cert *claims*; verifying the claim against Rekor is Level 4 work and remains queued.
+
+**v0.3.2** widened `provenance.signature_method` to `"gpg" | "ssh" | "sigstore"` (§5.1). The reference CLI v0.15.0 ships SSH-tag detection. The same patch documents the **Sigstore-on-host trap**: a properly-signed Sigstore tag may legitimately receive a `bad_cert` verdict from the host once the short-lived Fulcio cert expires, so a `"sigstore"`-method tag with `status: "invalid"` is **ambiguous** without client-side Rekor verification (Level 4) — *not* equivalent to "forged".
 
 **v0.3.1** added an optional `provenance.signature_method` field to §5.1 (gpg / sigstore detection); the reference CLI v0.14.0 shipped it. Spec patch only — the value is informative on top of the existing Level 3a verdict. Full Sigstore Level 4 verification (Rekor inclusion proof) is queued for a future revision.
 
@@ -728,6 +730,27 @@ The field is **optional**. Banks that don't implement detection MAY omit it. Age
   - Banks operating at Level 4 (client-side Rekor verification) resolve this ambiguity unconditionally; banks operating at Level 3a SHOULD surface the ambiguity to operators rather than silently rejecting.
 
 This rule does **not** apply to `"gpg"` or `"ssh"` methods, where `invalid` reflects a real verification failure.
+
+**Sigstore identity claim** *(new in v0.3.3)*. For `signature_method: "sigstore"` tags, banks SHOULD surface the cert's identity claim as `provenance.signature_identity`:
+
+```json
+{
+  "subject": "billy@chainguard.dev",
+  "subject_type": "email",
+  "issuer": "https://accounts.google.com"
+}
+```
+
+  - `subject` — the OIDC subject pulled from the Fulcio cert's first Subject Alternative Name (SAN) entry. For human signers, this is typically an email; for GitHub Actions OIDC signing, it is a workflow URI (`https://github.com/<org>/<repo>/.github/workflows/<file>@<ref>`).
+  - `subject_type` — one of `"email"`, `"uri"`, `"other"`. Reflects the SAN GeneralName tag (rfc822Name, uniformResourceIdentifier, …).
+  - `issuer` — the OIDC issuer URL from Fulcio extension OID `1.3.6.1.4.1.57264.1.1` (v1) or `1.3.6.1.4.1.57264.1.8` (v2). Examples:
+    - `"https://accounts.google.com"` — Google OAuth
+    - `"https://github.com/login/oauth"` — GitHub user OAuth
+    - `"https://token.actions.githubusercontent.com"` — GitHub Actions OIDC
+
+> **Extraction ≠ verification.** The identity claim above is what the cert *claims* it was issued to. Verifying that claim is genuine — i.e. that an attacker hasn't forged a Fulcio cert with arbitrary SAN values — requires checking the Rekor inclusion proof against Sigstore's public transparency log and validating the cert chain against the Fulcio root. That's Level 4 work (below) and is **not** done by extraction alone. Operators may surface this field for informational purposes ("publisher claims to be `<subject>` via `<issuer>`") but MUST NOT treat it as authenticated until Level 4 is implemented.
+
+The field is **optional**. Banks that don't implement extraction MAY omit it. Banks that do implement it but encounter a malformed CMS payload SHOULD also omit the field rather than reporting partial / wrong data — extraction failure is treated identically to "no Sigstore signature".
 
 Level 2+ banks REJECT subscriptions to server-hosted skills (§3.3), since those have no commit hashes. Server-hosted is feasible only at Levels 0–1.
 
