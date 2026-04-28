@@ -1,0 +1,27 @@
+# Editor / OS junk
+.DS_Store
+Thumbs.db
+*.swp
+*.swo
+*~
+.idea/
+.vscode/
+*.iml
+
+# Node (when reference impl lands)
+node_modules/
+*.log
+.npm
+.eslintcache
+*.tsbuildinfo
+
+# Output of reference impl runs
+/dist/
+/build/
+/out/
+/coverage/
+
+# Local skill bank state during development
+/agent-data/
+/skill-cache/
+*.local.json

@@ -1,0 +1,16 @@
+# example.com
+
+> example.com is a fictional service that demonstrates the agent-skills format. This llms.txt lists the skills the site publishes for LLM-driven agents to discover and execute.
+
+## Skills
+
+- [Placeholder image generator](https://cdn.jsdelivr.net/gh/example/agent-skills@v1.0.0/skills/placeholder-img/SKILL.md): generates SVG placeholder images for UI mockups.
+- [Charge a customer](https://cdn.jsdelivr.net/gh/example/agent-skills@v1.0.0/skills/charge-customer/SKILL.md): creates a charge against a customer (requires `$STRIPE_SECRET_KEY`).
+
+## Skills index (machine-readable)
+
+- [skills-index.json](https://cdn.jsdelivr.net/gh/example/agent-skills@v1.0.0/skills-index.json)
+
+## About
+
+These skills follow the [agent-skills specification v0.1.0](https://github.com/MauricioPerera/agent-skills). Provider-side documentation, signing key (`.well-known/agent-skills-key.asc`), and audit trail are available at the GitHub repo: [example/agent-skills](https://github.com/example/agent-skills).

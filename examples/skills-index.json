@@ -1,0 +1,35 @@
+{
+  "schema_version": "1.0",
+  "publisher": {
+    "name": "Example Inc.",
+    "domain": "example.com",
+    "github_org": "example",
+    "homepage": "https://example.com",
+    "agent_skills_key_url": "https://example.com/.well-known/agent-skills-key.asc"
+  },
+  "default_source": {
+    "type": "git",
+    "repo": "github.com/example/agent-skills",
+    "default_branch": "main",
+    "latest_release": "v1.0.0",
+    "latest_commit": "0000000000000000000000000000000000000000"
+  },
+  "skills": [
+    {
+      "id": "placeholder-img",
+      "version": "1.0.0",
+      "url": "https://cdn.jsdelivr.net/gh/example/agent-skills@v1.0.0/skills/placeholder-img/SKILL.md",
+      "summary": "Generate an SVG placeholder image with given dimensions and background color.",
+      "category": "image-generation",
+      "tags": ["svg", "mockup", "placeholder"]
+    },
+    {
+      "id": "charge-customer",
+      "version": "1.0.0",
+      "url": "https://cdn.jsdelivr.net/gh/example/agent-skills@v1.0.0/skills/charge-customer/SKILL.md",
+      "summary": "Create a Stripe charge against a customer. Requires $STRIPE_SECRET_KEY in shell environment.",
+      "category": "payments",
+      "tags": ["stripe", "billing", "charge"]
+    }
+  ]
+}
