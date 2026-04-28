@@ -133,27 +133,30 @@ For a production-grade walk-through, see [`IMPLEMENTATION.md`](./IMPLEMENTATION.
 
 ## Quick start (publisher side)
 
-You want to publish your tool as agent-skills:
+You want to publish your tool as agent-skills. With [`agent-skills-cli`](https://github.com/MauricioPerera/agent-skills-cli) v0.9.0+:
 
 ```bash
-mkdir my-agent-skills && cd my-agent-skills
-mkdir skills/my-tool
+# 1. Scaffold a complete pack (skills/, llms.txt, README, CI workflow).
+agent-skills init my-pack --pack --author "Your Name"
+cd my-pack
 
-# Edit skills/my-tool/SKILL.md — see examples/skills/ for the format
-vim skills/my-tool/SKILL.md
+# 2. Edit the scaffolded skills/hello-world/SKILL.md, then:
+agent-skills publish --check-only   # validate everything
 
-# Add /llms.txt and /skills-index.json at repo root (see examples/)
-
-# Validate against the JSON schema before committing:
-yq -o=json '.' skills/my-tool/SKILL.md \
-  | head -n -1 | tail -n +2 \
-  | npx ajv validate -s https://raw.githubusercontent.com/MauricioPerera/agent-skills/v0.1.1/schemas/skill.schema.json --spec=draft2020
-
+# 3. Initial commit + signed release tag.
 git init && git add . && git commit -m "initial release"
-git tag -s v1.0.0   # signed tag for Level 3 conformance
-gh repo create my-agent-skills --public --topic agent-skills
-git push --tags
+agent-skills publish --tag v1.0.0 --sign  # generates skills-index.json + signed tag
+gh repo create my-pack --public --topic agent-skills
+git push --follow-tags
 ```
+
+That's it — your pack is now discoverable via:
+- Direct URL: `cdn.jsdelivr.net/gh/<you>/my-pack@v1.0.0/skills/hello-world/SKILL.md`
+- GitHub topic: `agent-skills`
+
+The scaffolded `SKILL.md` includes every optional frontmatter field commented with a short explanation, so authors can discover the spec by editing the scaffold rather than reading this document end-to-end.
+
+If you prefer to scaffold by hand without the CLI, the [`examples/skills/`](./examples/skills/) directory has two complete `SKILL.md` files to copy from.
 
 That's it. Your skill pack is now discoverable via:
 - Direct URL: `cdn.jsdelivr.net/gh/<you>/my-agent-skills@v1.0.0/skills/my-tool/SKILL.md`
@@ -162,7 +165,7 @@ That's it. Your skill pack is now discoverable via:
 
 ## Sister projects
 
-- [`agent-skills-cli`](https://github.com/MauricioPerera/agent-skills-cli) — **reference CLI implementation**. Ships the full agent loop (validate, resolve, sync, query, exec, audit) with intent-conditional rerank by default; `bench` (v0.7.0+) for reproducible retrieval evaluation; `publish` (v0.8.0+) for skill-pack authors. Multi-provider embeddings: Cloudflare Workers AI, Ollama (local), OpenAI / OpenAI-compatible.
+- [`agent-skills-cli`](https://github.com/MauricioPerera/agent-skills-cli) — **reference CLI implementation**. Ships the full agent loop (validate, resolve, sync, query, exec, audit) with intent-conditional rerank by default; `bench` (v0.7.0+) for reproducible retrieval evaluation; `publish` (v0.8.0+) for pack authors; `init` (v0.9.0+) to scaffold a new pack. Multi-provider embeddings: Cloudflare Workers AI, Ollama (local), OpenAI / OpenAI-compatible.
 - [`agent-skills-pack`](https://github.com/MauricioPerera/agent-skills-pack) — **example skill pack** with 7 production-ready skills (HTTP, GitHub CLI, ripgrep, jq, base64, …). Each demonstrates a different pattern from this spec; intended as a copy-paste-and-fork baseline for new pack authors.
 - [`just-bash-data`](https://github.com/MauricioPerera/just-bash-data) — **storage runtime** providing the `db` (document store) and `vec` (vector search) primitives a conformant skill bank needs. The reference CLI's future `sync` / `query` / `exec` commands integrate with this.
 
