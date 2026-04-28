@@ -2,6 +2,8 @@
 
 > An open, decentralized **specification** for distributing tools to LLM agents — an alternative to MCP that is **token-efficient**, **transparent**, **immutable**, and **web-native**.
 
+> **Empirical proof of concept**: 7 / 7 agent intents retrieved their intended skill as top-1 from the public [`agent-skills-pack`](https://github.com/MauricioPerera/agent-skills-pack) using `@cf/baai/bge-base-en-v1.5` on Cloudflare Workers AI. Full benchmark: [agent-skills-cli/BENCHMARK.md](https://github.com/MauricioPerera/agent-skills-cli/blob/main/BENCHMARK.md).
+
 This repository defines a **format and a protocol**. It does not include a runtime. Conformant skill banks can be built atop any sufficient infrastructure (filesystem + vector index + shell). One reference runtime — built on the parallel project [`just-bash-data`](https://github.com/MauricioPerera/just-bash-data) — is described in [`IMPLEMENTATION.md`](./IMPLEMENTATION.md), but the spec proper is implementation-agnostic.
 
 ## The thesis
