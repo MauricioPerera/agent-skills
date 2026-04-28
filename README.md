@@ -163,9 +163,21 @@ That's it. Your skill pack is now discoverable via:
 - GitHub topic: `agent-skills`
 - Pull requests from the world
 
+## Two independent implementations
+
+The spec is **specified** (not just documented) — two implementations satisfy it with bit-identical retrieval behaviour:
+
+| Implementation | Language | Scope | Use it for |
+|---|---|---|---|
+| [`agent-skills-cli`](https://github.com/MauricioPerera/agent-skills-cli) | TypeScript | full agent loop (validate, resolve, sync, query, exec, audit, bench, publish, init, update, signature verification) | production |
+| [`agent-skills-py-proof`](https://github.com/MauricioPerera/agent-skills-py-proof) | Python (510 LOC, single file) | retrieval only (parse, sync, query, bench) | reading the spec; reference for porting to a third language |
+
+Both produce **identical scores to 4 decimal places** on the canonical benchmark (34/35 top-1 = 97.1 %, 35/35 top-3 = 100 %, mean margin +0.175, identical sole failure on the same paraphrase). If a third implementation produces different numbers on the same setup, either it's doing something different or it has found a spec gap — that's the point of having two.
+
 ## Sister projects
 
-- [`agent-skills-cli`](https://github.com/MauricioPerera/agent-skills-cli) — **reference CLI implementation**. Ships the full agent loop (validate, resolve, sync, query, exec, audit) with intent-conditional rerank by default; `bench` (v0.7.0+) for reproducible retrieval evaluation; `publish` (v0.8.0+) for pack authors; `init` (v0.9.0+) to scaffold a new pack. Multi-provider embeddings: Cloudflare Workers AI, Ollama (local), OpenAI / OpenAI-compatible.
+- [`agent-skills-cli`](https://github.com/MauricioPerera/agent-skills-cli) — **reference TypeScript CLI**. Ships the full agent loop (validate, resolve, sync, query, exec, audit) with intent-conditional rerank by default; `bench` (v0.7.0+) for reproducible retrieval evaluation; `publish` (v0.8.0+) for pack authors; `init` (v0.9.0+) to scaffold a new pack; `update` (v0.11.0+) to refresh subscribed packs + GC orphans; signed-tag verification (v0.10.0+). Multi-provider embeddings: Cloudflare Workers AI, Ollama (local), OpenAI / OpenAI-compatible.
+- [`agent-skills-py-proof`](https://github.com/MauricioPerera/agent-skills-py-proof) — **510-line Python proof** that the spec is sufficient for an independent implementation. Bit-identical retrieval scores to the TS CLI on the canonical benchmark.
 - [`agent-skills-pack`](https://github.com/MauricioPerera/agent-skills-pack) — **example skill pack** with 7 production-ready skills (HTTP, GitHub CLI, ripgrep, jq, base64, …). Each demonstrates a different pattern from this spec; intended as a copy-paste-and-fork baseline for new pack authors.
 - [`just-bash-data`](https://github.com/MauricioPerera/just-bash-data) — **storage runtime** providing the `db` (document store) and `vec` (vector search) primitives a conformant skill bank needs. The reference CLI's future `sync` / `query` / `exec` commands integrate with this.
 
