@@ -135,7 +135,7 @@ For a production-grade walk-through, see [`IMPLEMENTATION.md`](./IMPLEMENTATION.
 
 ## Quick start (publisher side)
 
-You want to publish your tool as agent-skills. With [`agent-skills-cli`](https://github.com/MauricioPerera/agent-skills-cli) v0.9.0+:
+You want to publish your tool as agent-skills. With [`agent-skills-cli`](https://github.com/MauricioPerera/agent-skills-cli) v0.13+:
 
 ```bash
 # 1. Scaffold a complete pack (skills/, llms.txt, README, CI workflow).

@@ -71,11 +71,11 @@ jobs:
         with:
           node-version: "22"
 
-      - name: Install agent-skills CLI (pinned to v0.11.0)
+      - name: Install agent-skills CLI (pinned to v0.13.1)
         run: |
           # Pinned so a CLI release that tightens validation can't
           # retroactively break the spec's CI without a deliberate bump.
-          git clone --depth 1 --branch v0.11.0 https://github.com/MauricioPerera/agent-skills-cli /tmp/cli
+          git clone --depth 1 --branch v0.13.1 https://github.com/MauricioPerera/agent-skills-cli /tmp/cli
           cd /tmp/cli
           npm ci
           npm run build
