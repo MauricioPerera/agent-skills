@@ -1,5 +1,7 @@
 # agent-skills
 
+[![validate](https://github.com/MauricioPerera/agent-skills/actions/workflows/validate.yml/badge.svg)](https://github.com/MauricioPerera/agent-skills/actions/workflows/validate.yml)
+
 > An open, decentralized **specification** for distributing tools to LLM agents — an alternative to MCP that is **token-efficient**, **transparent**, **immutable**, and **web-native**.
 
 > **Empirical proof of concept (live Cloudflare Workers AI, 35 paraphrased intents × 7 skills)**:
