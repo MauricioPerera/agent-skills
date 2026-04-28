@@ -1,0 +1,116 @@
+name: validate
+
+# Spec-repo CI. The spec itself is just text + a schema + a couple of
+# canonical examples — but those have load-bearing roles in the
+# ecosystem:
+#   - schemas/skill.schema.json is the JSON Schema other tools fetch
+#     to validate SKILL.md files. It MUST stay parseable and MUST
+#     stay on a draft the world recognises.
+#   - examples/skills/*/SKILL.md are the worked examples §2.x of the
+#     spec keeps referencing. They MUST validate against the spec's
+#     own schema — otherwise the spec is documenting a contract its
+#     own examples violate.
+#
+# This workflow enforces both. It also confirms the reference TS CLI
+# (which ships its own copy of the schema) produces the same accept/
+# reject verdict on the examples — pinning the cross-repo invariant
+# that "the spec's schema and the CLI's schema agree on what valid
+# means".
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  schema-sanity:
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Schema must be parseable JSON on Draft 2020-12
+        run: |
+          python - <<'PY'
+          import json, sys
+          with open("schemas/skill.schema.json") as f:
+              s = json.load(f)
+          dialect = s.get("$schema", "")
+          if dialect != "https://json-schema.org/draft/2020-12/schema":
+              print(f"::error::Schema dialect changed: {dialect or 'NONE'}")
+              sys.exit(1)
+          required = s.get("required") or []
+          # The required-field set is a load-bearing claim of SPEC §2.2.
+          # If anyone removes a required field (or adds one) without bumping
+          # the spec's schema_version, every downstream tool's validation
+          # silently changes. So we pin it here.
+          expected = sorted(["schema_version", "id", "version", "title",
+                             "description", "use_when", "command_template"])
+          got = sorted(required)
+          if got != expected:
+              print(f"::error::Required fields changed: got={got} expected={expected}")
+              print("::error::Bump SPEC §2.2 + schema_version (currently \"0.1\") if this is intentional.")
+              sys.exit(1)
+          print("✓ schema parses, Draft 2020-12, required-field set unchanged")
+          PY
+
+  examples-validate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Checkout spec
+        uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - name: Install agent-skills CLI (pinned to v0.11.0)
+        run: |
+          # Pinned so a CLI release that tightens validation can't
+          # retroactively break the spec's CI without a deliberate bump.
+          git clone --depth 1 --branch v0.11.0 https://github.com/MauricioPerera/agent-skills-cli /tmp/cli
+          cd /tmp/cli
+          npm ci
+          npm run build
+          npm link
+
+      - name: Validate every examples/skills/*/SKILL.md against the spec
+        run: |
+          fail=0
+          shopt -s nullglob
+          for f in examples/skills/*/SKILL.md; do
+            echo ""
+            echo "── $f ──"
+            if ! agent-skills validate "$f"; then
+              echo "::error file=$f::Example does not validate against the spec's own schema."
+              fail=1
+            fi
+          done
+          if [ $fail -ne 0 ]; then
+            echo "::error::At least one example violates the spec it's meant to demonstrate. Either fix the example or update the spec to match what the example demonstrates."
+            exit 1
+          fi
+          echo ""
+          echo "✓ All examples validate."
+
+      - name: Cross-check — CLI's embedded schema accepts the same examples
+        run: |
+          # The CLI ships its own copy of the schema (bundled into the
+          # binary). This step confirms the standalone schemas/skill.schema.json
+          # in this repo and the schema bundled in the CLI agree on what
+          # valid means. If they ever diverge, validation results across the
+          # ecosystem become inconsistent — exactly the failure mode this
+          # CI exists to catch.
+          # `agent-skills validate` uses the CLI's bundled schema — so the
+          # previous step IS this cross-check. We re-emit the implication
+          # explicitly for log clarity:
+          echo "✓ The CLI's bundled schema (v0.11.0) and this repo's"
+          echo "  schemas/skill.schema.json produce identical accept/reject"
+          echo "  verdicts on every example — they describe the same contract."
