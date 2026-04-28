@@ -1,11 +1,13 @@
 # agent-skills — Specification
 
-**Version**: 0.3.1 (draft)
+**Version**: 0.3.2 (draft)
 **Status**: Open for comment. Schema and protocol are subject to change before v1.0.0.
 
-**Schema version** (the value embedded in `SKILL.md` files): still `"0.1"` — v0.3 (and the v0.3.1 patch) are purely additive. No breaking changes to the SKILL.md format. v0.2.x banks remain conformant.
+**Schema version** (the value embedded in `SKILL.md` files): still `"0.1"` — v0.3 (and the v0.3.1 / v0.3.2 patches) are purely additive. No breaking changes to the SKILL.md format. v0.2.x banks remain conformant.
 
-**v0.3.1** adds an optional `provenance.signature_method` field to §5.1 (gpg / sigstore detection); the reference CLI v0.14.0 ships this. Spec patch only — the value is informative on top of the existing Level 3a verdict. Full Sigstore Level 4 verification (Rekor inclusion proof) is queued for a future revision.
+**v0.3.2** widens `provenance.signature_method` to `"gpg" | "ssh" | "sigstore"` (§5.1). The reference CLI v0.15.0 ships SSH-tag detection. The same patch documents the **Sigstore-on-host trap**: a properly-signed Sigstore tag may legitimately receive a `bad_cert` verdict from the host once the short-lived Fulcio cert expires, so a `"sigstore"`-method tag with `status: "invalid"` is **ambiguous** without client-side Rekor verification (Level 4) — *not* equivalent to "forged".
+
+**v0.3.1** added an optional `provenance.signature_method` field to §5.1 (gpg / sigstore detection); the reference CLI v0.14.0 shipped it. Spec patch only — the value is informative on top of the existing Level 3a verdict. Full Sigstore Level 4 verification (Rekor inclusion proof) is queued for a future revision.
 
 This document defines a **format and a protocol**. It does not define a runtime, a storage backend, or a UI. Conformant implementations MAY be built atop any sufficient infrastructure (filesystem + vector index + shell). One reference runtime is described in [`IMPLEMENTATION.md`](./IMPLEMENTATION.md), but the spec itself is implementation-agnostic.
 
@@ -708,14 +710,24 @@ Banks MAY require one of these levels per subscription. **All levels still requi
 
 A bank operating at Level 3a SHOULD record the host's reason string (e.g., `"valid"`, `"unknown_key"`, `"unsigned"`) in `provenance.signature_status` so an operator can distinguish *""sloppy publisher hygiene""* (unsigned) from *""active red flag""* (signature present but unverifiable). The `signature_status` enumeration is `"valid" | "invalid" | "unsigned" | "unverified"`; the last value indicates the bank could not perform verification (non-supported host, lightweight tag with no tag object, ref is a raw SHA, etc.) and is **not** equivalent to "valid".
 
-**Signing method detection** *(new in v0.3.1)*. Banks SHOULD additionally surface `provenance.signature_method` when a signature payload is present and recognisable:
+**Signing method detection** *(new in v0.3.1, extended in v0.3.2)*. Banks SHOULD additionally surface `provenance.signature_method` when a signature payload is present and recognisable:
 
   - `"gpg"` — classic OpenPGP-armored signature (PEM header `-----BEGIN PGP SIGNATURE-----`).
+  - `"ssh"` *(v0.3.2)* — SSH-format git signature (PEM header `-----BEGIN SSH SIGNATURE-----`), produced by `git config gpg.format ssh && git tag -s`. Trust comes from the SSH pubkey being attached to the publisher's host account. Common in modern publisher setups; many large projects (e.g. `sigstore/cosign`'s release tags) use SSH signing rather than OpenPGP.
   - `"sigstore"` — gitsign / Sigstore CMS signature (PEM header `-----BEGIN SIGNED MESSAGE-----`), produced by `gitsign` or the cosign git-sign workflow. Uses Fulcio-issued ephemeral certs + Rekor transparency log.
 
-Detection is structural (PEM header), not full Level 4 verification: the bank still trusts the host's verdict on the signature's validity. The method field gives operators visibility into WHICH cryptographic system signed the tag — useful for policy decisions ("we only accept Sigstore-signed packs"). Full Rekor inclusion-proof verification is what the spec calls Level 4 (§5.1) and is queued for a future revision; v0.3.1 surfaces the method on top of the existing Level 3a verdict.
+Detection is structural (PEM header), not full Level 4 verification: the bank still trusts the host's verdict on the signature's validity. The method field gives operators visibility into WHICH cryptographic system signed the tag — useful for policy decisions ("we only accept Sigstore-signed packs"). Full Rekor inclusion-proof verification is what the spec calls Level 4 (below) and is queued for a future revision; the method field surfaces on top of the existing Level 3a verdict.
 
 The field is **optional**. Banks that don't implement detection MAY omit it. Agents reading provenance MUST treat its absence as "method unknown", not as "method GPG by default".
+
+**Sigstore-on-host trap** *(new in v0.3.2)*. A `"sigstore"`-method tag deserves special interpretation rules, because a properly-signed Sigstore tag can legitimately produce an `invalid` verdict from a Level 3a host:
+
+  - Fulcio issues ephemeral certs that **expire ~10 minutes** after the signing event. Inclusion in Rekor is the durable proof that the signature was made when the cert was valid.
+  - Hosts that re-validate the cert chain at *lookup* time (e.g., GitHub's `verification.reason: "bad_cert"`) will reject every Sigstore signature older than ~10 minutes — including correctly-signed ones.
+  - Therefore, for `signature_method: "sigstore"`, banks MUST treat `status: "invalid"` with a `reason` indicating cert expiry/validity (e.g., `"bad_cert"`, `"expired"`) as **ambiguous**: the signature *may* be perfectly valid via Rekor, but the host can't tell. Banks SHOULD log a distinct hint (`"sigstore_host_unverifiable"` or similar) and SHOULD NOT treat this case identically to `"unknown_key"` (a true red flag for GPG/SSH).
+  - Banks operating at Level 4 (client-side Rekor verification) resolve this ambiguity unconditionally; banks operating at Level 3a SHOULD surface the ambiguity to operators rather than silently rejecting.
+
+This rule does **not** apply to `"gpg"` or `"ssh"` methods, where `invalid` reflects a real verification failure.
 
 Level 2+ banks REJECT subscriptions to server-hosted skills (§3.3), since those have no commit hashes. Server-hosted is feasible only at Levels 0–1.
 
