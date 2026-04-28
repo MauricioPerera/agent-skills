@@ -1,11 +1,13 @@
 # agent-skills — Specification
 
-**Version**: 0.4.0 (draft)
+**Version**: 0.4.1 (draft)
 **Status**: Open for comment. Schema and protocol are subject to change before v1.0.0.
 
-**Schema version** (the value embedded in `SKILL.md` files): still `"0.1"` — v0.4 is additive (new normative section §5.4 specifying the Level 4 verification interface; existing fields unchanged). No breaking changes to the SKILL.md format. v0.2.x banks remain conformant.
+**Schema version** (the value embedded in `SKILL.md` files): still `"0.1"` — v0.4.x patches are additive (no SKILL.md field changes). v0.2.x banks remain conformant.
 
-**v0.4.0** formalizes the **Level 4 client-side verification interface** in §5.4. The previous patches (v0.3.1 / v0.3.2 / v0.3.3) added optional fields *describing* what a bank had observed; v0.4.0 specifies what a bank operating at Level 4 must *do* to upgrade a `"sigstore"`-method tag from "host says invalid" to "client-verified valid" — in other words, the contract that resolves the Sigstore-on-host trap. The reference CLI v0.17.0 lands the parsing primitives (Rekor entry decoding, public-instance pinning); the verification primitives (inclusion-proof Merkle math, checkpoint signature, Fulcio chain) are queued for v0.18.
+**v0.4.1** patches §5.4.2 step 3 to specify the **gitsign Rekor lookup hash framing**. The bytes that get SHA-256'd for `/api/v1/index/retrieve` are NOT the raw signed payload; they're the SignerInfo's SignedAttrs *marshaled for verification* per RFC 5652 §5.4 (the [0]-tagged signedAttrs re-encoded with SET tag 0x31, length and content unchanged). Reference CLI v0.17.1 ships `computeGitsignRekorLookupHash` + `findRekorEntryByHash`. Validated against the structural CMS invariant (messageDigest attribute inside SignedAttrs equals SHA-256 of the original payload); the live Rekor index lookup for our 2026-01 fixture currently returns empty, suggesting that entry is on a rotated/pruned shard — an open issue for future investigation.
+
+**v0.4.0** formalized the **Level 4 client-side verification interface** in §5.4. The previous patches (v0.3.1 / v0.3.2 / v0.3.3) added optional fields *describing* what a bank had observed; v0.4.0 specifies what a bank operating at Level 4 must *do* to upgrade a `"sigstore"`-method tag from "host says invalid" to "client-verified valid" — the contract that resolves the Sigstore-on-host trap. The reference CLI v0.17.0 lands the parsing primitives (Rekor entry decoding, public-instance pinning); the verification primitives (inclusion-proof Merkle math, checkpoint signature, Fulcio chain) are queued for v0.18.
 
 **v0.3.3** added an optional `provenance.signature_identity` field for `"sigstore"`-method tags (§5.1). The Fulcio cert's Subject Alternative Name (SAN) carries the OIDC subject (email or workflow URI) and Fulcio extension OID `1.3.6.1.4.1.57264.1.1` (or `.1.8`) carries the OIDC issuer. Banks SHOULD surface both. The reference CLI v0.16.0 ships extraction (cross-impl parity validated continuously). **Extraction is not verification**: the identity is what the cert *claims*; verifying the claim against Rekor is Level 4 work and remains queued.
 
@@ -804,7 +806,20 @@ The motivation is the **Sigstore-on-host trap** documented in §5.1: a properly-
 
 2. **Validate the Fulcio cert chain.** The leaf cert MUST chain to a pinned Fulcio root certificate. Banks SHOULD obtain Fulcio roots via Sigstore's TUF repository at `https://tuf-repo-cdn.sigstore.dev/`; banks MAY pin a static root for simplicity, but MUST document the rotation policy.
 
-3. **Locate the Rekor entry.** Compute the artifact hash that Rekor expects for this signature kind (gitsign uses `hashedrekord` v0.0.1; the artifact-hash semantics are documented in `gitsign`'s source). Query the public Rekor instance at `https://rekor.sigstore.dev` (or a configured private instance) for an entry whose `body.spec.data.hash.value` matches AND whose `body.spec.signature.publicKey.content` decodes to the same Fulcio cert from step 1. There MAY be multiple matching entries (e.g., re-signing); the verifier SHOULD accept the oldest matching entry whose `integratedTime` is within the cert's validity window.
+3. **Locate the Rekor entry.** Compute the lookup hash *as gitsign computes it* (see below) and query the public Rekor instance at `https://rekor.sigstore.dev` (or a configured private instance) via `POST /api/v1/index/retrieve` with body `{"hash": "sha256:<hex>"}`. Filter the returned UUIDs to the entry whose `body.spec.signature.publicKey.content` decodes to the same Fulcio cert from step 1. There MAY be multiple matching UUIDs (e.g., re-signing); the verifier SHOULD accept the oldest entry whose `integratedTime` is within the cert's validity window.
+
+   **gitsign Rekor lookup framing** *(new in v0.4.1)*. gitsign does NOT submit the raw signed payload's SHA-256 to Rekor. It submits SHA-256 of the SignerInfo's SignedAttrs **marshaled for verification** per RFC 5652 §5.4:
+
+   > A separate encoding of the signedAttrs field is performed for message digest calculation. The IMPLICIT [0] tag in the signedAttrs is not used for the DER encoding, rather an EXPLICIT SET OF tag is used.
+
+   Concretely, the lookup hash computation is:
+   1. Walk the CMS payload to `SignerInfos[0].signedAttrs` (the `[0] IMPLICIT` field, ASN.1 tag `0xA0`).
+   2. Re-frame those bytes: replace the outer tag byte `0xA0` with `0x31` (SET); the length encoding and content bytes are unchanged.
+   3. SHA-256 the re-framed bytes. That hex digest is the Rekor lookup hash.
+
+   **Structural validation invariant.** A correct walk to the SignedAttrs satisfies a property derivable from RFC 5652 §11.2: the `messageDigest` attribute (OID `1.2.840.113549.1.9.4`) inside the SignedAttrs MUST equal `SHA-256(verification.payload)` (the original signed bytes). Verifiers SHOULD assert this invariant before trusting their own lookup hash; failure indicates a CMS walk regression. Reference: `agent-skills-cli`'s `tests/lib/cms.test.ts` validates the invariant against the real `sigstore/gitsign@v0.14.0` fixture.
+
+   **Rekor shard rotation note.** Rekor instances rotate trees periodically. An entry that was real at signing time MAY no longer appear in the index endpoint of a current shard. v0.18+ verifiers MUST treat "no entry found" as a distinct outcome from "entry found, proof invalid" — the former indicates the entry has been pruned/migrated and the host's verdict (or Fulcio cert validity window) is the only available signal; the latter is a hard verification failure.
 
 4. **Verify the inclusion proof.** Compute the Merkle root from the entry's leaf hash (defined as `RFC6962-style` SHA-256 of `0x00 || entry.body`) and the proof's audit hashes (`hashes`, leaf-to-root order). The computed root MUST equal `inclusionProof.rootHash`. The proof's `logIndex` is the **local** position within the shard's tree (identified by `entry.logID`), NOT the global `entry.logIndex` — verifiers that confuse the two will reject valid proofs. The proof's `treeSize` MUST match the size declared in the checkpoint body.
 
