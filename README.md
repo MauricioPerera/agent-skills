@@ -156,6 +156,7 @@ That's it. Your skill pack is now discoverable via:
 ## Sister projects
 
 - [`agent-skills-cli`](https://github.com/MauricioPerera/agent-skills-cli) — **reference CLI implementation**. Validates SKILL.md files against this spec and resolves command_template against arg values. v0.2.0-alpha shipped covering local-only operations (validate + resolve); v0.2.0 final adds sync + query + exec.
+- [`agent-skills-pack`](https://github.com/MauricioPerera/agent-skills-pack) — **example skill pack** with 7 production-ready skills (HTTP, GitHub CLI, ripgrep, jq, base64, …). Each demonstrates a different pattern from this spec; intended as a copy-paste-and-fork baseline for new pack authors.
 - [`just-bash-data`](https://github.com/MauricioPerera/just-bash-data) — **storage runtime** providing the `db` (document store) and `vec` (vector search) primitives a conformant skill bank needs. The reference CLI's future `sync` / `query` / `exec` commands integrate with this.
 
 ## Status
