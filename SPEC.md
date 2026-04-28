@@ -1,9 +1,11 @@
 # agent-skills — Specification
 
-**Version**: 0.3.0 (draft)
+**Version**: 0.3.1 (draft)
 **Status**: Open for comment. Schema and protocol are subject to change before v1.0.0.
 
-**Schema version** (the value embedded in `SKILL.md` files): still `"0.1"` — v0.3, like v0.2, is purely additive. No breaking changes to the SKILL.md format. The v0.3 changes are bank-side audit log + rerank semantics; they describe patterns that the reference CLI v0.12.0 already implements. v0.2.x banks remain conformant.
+**Schema version** (the value embedded in `SKILL.md` files): still `"0.1"` — v0.3 (and the v0.3.1 patch) are purely additive. No breaking changes to the SKILL.md format. v0.2.x banks remain conformant.
+
+**v0.3.1** adds an optional `provenance.signature_method` field to §5.1 (gpg / sigstore detection); the reference CLI v0.14.0 ships this. Spec patch only — the value is informative on top of the existing Level 3a verdict. Full Sigstore Level 4 verification (Rekor inclusion proof) is queued for a future revision.
 
 This document defines a **format and a protocol**. It does not define a runtime, a storage backend, or a UI. Conformant implementations MAY be built atop any sufficient infrastructure (filesystem + vector index + shell). One reference runtime is described in [`IMPLEMENTATION.md`](./IMPLEMENTATION.md), but the spec itself is implementation-agnostic.
 
@@ -705,6 +707,15 @@ Banks MAY require one of these levels per subscription. **All levels still requi
 - **Level 4 (Sigstore + Rekor)**: signature MUST be present in the public Sigstore transparency log and not revoked. Implies Level 3.
 
 A bank operating at Level 3a SHOULD record the host's reason string (e.g., `"valid"`, `"unknown_key"`, `"unsigned"`) in `provenance.signature_status` so an operator can distinguish *""sloppy publisher hygiene""* (unsigned) from *""active red flag""* (signature present but unverifiable). The `signature_status` enumeration is `"valid" | "invalid" | "unsigned" | "unverified"`; the last value indicates the bank could not perform verification (non-supported host, lightweight tag with no tag object, ref is a raw SHA, etc.) and is **not** equivalent to "valid".
+
+**Signing method detection** *(new in v0.3.1)*. Banks SHOULD additionally surface `provenance.signature_method` when a signature payload is present and recognisable:
+
+  - `"gpg"` — classic OpenPGP-armored signature (PEM header `-----BEGIN PGP SIGNATURE-----`).
+  - `"sigstore"` — gitsign / Sigstore CMS signature (PEM header `-----BEGIN SIGNED MESSAGE-----`), produced by `gitsign` or the cosign git-sign workflow. Uses Fulcio-issued ephemeral certs + Rekor transparency log.
+
+Detection is structural (PEM header), not full Level 4 verification: the bank still trusts the host's verdict on the signature's validity. The method field gives operators visibility into WHICH cryptographic system signed the tag — useful for policy decisions ("we only accept Sigstore-signed packs"). Full Rekor inclusion-proof verification is what the spec calls Level 4 (§5.1) and is queued for a future revision; v0.3.1 surfaces the method on top of the existing Level 3a verdict.
+
+The field is **optional**. Banks that don't implement detection MAY omit it. Agents reading provenance MUST treat its absence as "method unknown", not as "method GPG by default".
 
 Level 2+ banks REJECT subscriptions to server-hosted skills (§3.3), since those have no commit hashes. Server-hosted is feasible only at Levels 0–1.
 
