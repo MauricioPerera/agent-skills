@@ -66,9 +66,15 @@ db skills index create category --sorted
 db skills index create version --sorted
 vec create skills --dim 1024 --quantize int8 --ivf-clusters 100
 
-# Upsert a skill at ingest time (id = full identity per SPEC §1)
+# Upsert a skill at ingest time. The _id is the full identity per SPEC §1.
+# The author-declared frontmatter is merged with bank-computed fields:
+#   - provenance: computed from git metadata at ingest (NOT from the file).
+#   - usage_count, avg_rating: computed from skill_audit aggregations.
+#   - inserted_at, updated_at: bank-set timestamps.
 db skills insert '{
-  "_id": "github.com/stripe/agent-skills@a1b2c3d4.../charge-customer",
+  "_id": "github.com/stripe/agent-skills@a1b2c3d4e5f67890abcdef1234567890abcdef12/charge-customer",
+
+  // === fields from the SKILL.md frontmatter (author-declared) ===
   "schema_version": "0.1",
   "id": "charge-customer",
   "version": "1.2.0",
@@ -85,17 +91,22 @@ db skills insert '{
   "required_env": ["STRIPE_SECRET_KEY"],
   "network": ["https://api.stripe.com/v1/charges"],
   "applicable_when": { ... },
+
+  // === fields computed by the bank at ingest (NOT in SKILL.md) ===
   "provenance": {
     "source_type": "git",
     "source": "github.com/stripe/agent-skills",
-    "ref_resolved_to": "a1b2c3d4...",
+    "ref_resolved_to": "a1b2c3d4e5f67890abcdef1234567890abcdef12",
     "ref_requested": "v1.2.0",
     "fetched_at": "2026-04-28T12:00:00Z",
     "signature_status": "valid",
     "signed_by": "B5A4 9C28 D9F1 ..."
   },
+
+  // === fields computed by the bank from audit signals ===
   "usage_count": 0,
-  "avg_rating": null
+  "avg_rating": null,
+  "inserted_at": "2026-04-28T12:00:00Z"
 }'
 
 # Store the embedding (computed locally from the spec §4.2 composition)

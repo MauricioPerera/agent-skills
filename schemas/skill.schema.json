@@ -123,7 +123,13 @@
       "type": "array",
       "items": { "type": "string", "pattern": "^[A-Z_][A-Z0-9_]*$" },
       "uniqueItems": true,
-      "description": "Env var NAMES (not values). Values are never published."
+      "description": "Env var names the skill REQUIRES to function. Values are never published. Used for presence-checking + sandbox env-access."
+    },
+    "optional_env": {
+      "type": "array",
+      "items": { "type": "string", "pattern": "^[A-Z_][A-Z0-9_]*$" },
+      "uniqueItems": true,
+      "description": "Env var names the skill MAY read but does not require. Used by sandboxed banks to extend the read-access list without making them mandatory."
     },
     "network": {
       "type": "array",
@@ -139,13 +145,15 @@
       "properties": {
         "os": {
           "type": "array",
-          "items": { "type": "string", "enum": ["linux", "macos", "windows", "freebsd"] },
-          "uniqueItems": true
+          "items": { "type": "string", "pattern": "^[a-z][a-z0-9-]*$" },
+          "uniqueItems": true,
+          "description": "Lowercase OS identifiers. Common values: linux, macos, windows, freebsd. Open-ended; banks unable to recognize a value MUST treat the skill as potentially applicable."
         },
         "arch": {
           "type": "array",
-          "items": { "type": "string", "enum": ["x86_64", "arm64", "i386", "armv7"] },
-          "uniqueItems": true
+          "items": { "type": "string", "pattern": "^[a-z][a-z0-9_-]*$" },
+          "uniqueItems": true,
+          "description": "Lowercase architecture identifiers. Common values: x86_64, arm64, i386, armv7. Open-ended."
         },
         "shell_commands_present": {
           "type": "array",

@@ -7,15 +7,23 @@ description: "Returns a deterministic SVG image with given width, height, and op
 use_when: "the user asks for a placeholder image, mockup asset, or dummy image with specific dimensions and an optional color"
 
 # Placeholders are in argument position. The bank substitutes each {arg} as a
-# single shell argument; values do not need to be pre-quoted in the template.
-# See SPEC.md §2.6 for the substitution rule.
-command_template: "curl -fsSL --get https://img.automators.work/{dimensions} --data-urlencode bg={bg}"
+# single shell argument; integer values are inserted unquoted (no shell metacharacters
+# possible). See SPEC.md §2.6 for the substitution rule.
+#
+# Note the path-construction trick: bash's printf composes the URL from
+# {width} and {height} as a single argument to curl. Each {placeholder} sits
+# between whitespace-separated args to printf, never inside literal quotes.
+command_template: "curl -fsSL --get \"$(printf 'https://img.automators.work/%dx%d' {width} {height})\" --data-urlencode bg={bg}"
 
 args:
-  dimensions:
-    type: string
-    description: "WIDTHxHEIGHT, e.g. 800x600. Width and height each ≤ 4000."
-    pattern: "^[1-9][0-9]{0,3}x[1-9][0-9]{0,3}$"
+  width:
+    type: integer
+    description: "image width in pixels (1-4000)"
+    range: [1, 4000]
+  height:
+    type: integer
+    description: "image height in pixels (1-4000)"
+    range: [1, 4000]
   bg:
     type: string
     description: "6-digit hex color code without leading hash"

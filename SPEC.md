@@ -151,7 +151,8 @@ chains: [ ... ]
 | `shell` | string | `"bash"` (default) or other POSIX-compliant. Banks running on non-matching shells MAY refuse the skill. |
 | `idempotent` | boolean | If `true`, re-running the skill with same args is safe. Default: `false`. Used by chain executor for retry decisions (§2.8). |
 | `required_commands` | string[] | Commands the template invokes (`["jq", "curl"]`). Banks MAY filter out skills whose required commands are unavailable. |
-| `required_env` | string[] | Env var **names** the skill expects. **Values are never published.** |
+| `required_env` | string[] | Env var **names** the skill REQUIRES to function (presence-checked at retrieval / pre-exec). **Values are never published.** |
+| `optional_env` | string[] | Env var names the skill MAY read but does not require. Used by sandboxed banks to determine the full env-access list (see §4.4). |
 | `network` | string[] | URL-prefix allowlist (§2.10). |
 | `applicable_when` | object | Conditions for the skill to be applicable (§2.7). |
 | `deprecates` | string[] | Identities of skills this version replaces. Banks SHOULD mark superseded skills as `deprecated: true` upon syncing. |
@@ -214,15 +215,51 @@ Valid `type` values: `string`, `integer`, `number`, `boolean`, `array`, `object`
 
 **Array type** MUST declare `items` (a recursive arg schema). **Object type** MAY declare `properties` (a per-field schema map), or remain unconstrained.
 
-**Quoting policy**: at call time, a substituted value is inserted into `command_template` as a **single shell argument**. The bank automatically wraps strings in single quotes with embedded single quotes encoded as `'\''`. Numeric values are inserted unquoted (after pattern validation rejects shell metacharacters). Booleans become the literal strings `true` / `false`. Arrays and objects are inserted as JSON-encoded strings.
+**Quoting policy** (per type):
 
-**Skill authors MUST place `{placeholder}` in argument position**, never inside literal quotes:
+| Type | Substitution rule |
+|---|---|
+| `string` | wrapped in single quotes; embedded single quotes encoded as `'\''` |
+| `integer`, `number` | inserted as-is (the type system guarantees no shell metacharacters: digits, optional `-`, optional `.`, optional `e±N`) |
+| `boolean` | inserted as the literal `true` or `false` (unquoted) |
+| `array`, `object` | JSON-encoded, then single-quoted as a string |
 
-✅ `curl -d amount={amount}` (placeholder is its own arg after `-d`)
-✅ `curl -d "$(printf 'amount=%s' {amount})"` (substitution then quoting in shell)
-❌ `curl -d "amount={amount}"` (placeholder inside literal double quotes — UNSAFE)
+The result of every substitution is **a single shell argument** suitable for direct use after a flag (e.g., `-d amount={amount}` becomes `-d 'Hello World'` for a string value, or `-d 1000` for an integer).
 
-The bank's substitution does NOT attempt to "fix" templates that violate this rule; values inside literal quotes are inserted verbatim and may break or open injection. Conformant banks SHOULD detect and refuse such templates at ingest time.
+**Skill authors MUST place `{placeholder}` in argument position**, never inside literal `"..."` or `'...'`:
+
+✅ `curl -d amount={amount}` — placeholder is its own arg after `-d`. Bank substitutes `{amount}` with the properly-quoted value.
+
+❌ `curl -d "amount={amount}"` — placeholder inside literal double quotes. UNSAFE: the bank still substitutes the placeholder, but the surrounding double quotes alter how the shell parses the result. With a string value containing single quotes (which the substitution would escape with `'\''`), the parsed result is malformed.
+
+❌ `curl -d 'amount={amount}'` — placeholder inside literal single quotes. The shell's quoting rules treat the single-quoted region as opaque; the substituted value's escaping is taken literally, producing wrong output.
+
+The bank's substitution does NOT attempt to "fix" templates that embed placeholders inside literal quotes; the substituted value is inserted verbatim and the resulting command may be malformed or vulnerable. Conformant banks SHOULD detect this at ingest time (a literal quote character `"` or `'` immediately preceding or following a `{name}` substring is a strong signal of violation) and refuse such templates with a clear error.
+
+**Composing more complex values**: skills that need to build a quoted string from multiple parts SHOULD do so via shell features in the template, not by embedding placeholders inside quotes. For example, to build a JSON body from multiple args:
+
+```bash
+# Conformant: jq composes the JSON, every {placeholder} is in argument position
+curl -X POST https://api.example.com/charges \
+  -d "$(jq -n --arg amt {amount} --arg cur {currency} '{amount: $amt, currency: $cur}')"
+```
+
+Here, every `{placeholder}` sits between two whitespace-separated arguments to `jq`. The bank's single-quoting produces well-formed `--arg` values; `jq` builds the JSON; bash double-quotes the result of `$(...)` for `-d`. No placeholder is inside a literal quote.
+
+**Disambiguation — command substitution vs literal strings**:
+
+The "no placeholders inside literal quotes" rule applies to **literal `"..."` and `'...'` string contexts**, where the substituted value's escaping conflicts with the surrounding quote semantics. It does NOT apply inside `$(...)` command substitution — even if the `$(...)` itself is wrapped in `"..."` for splitting/expansion control.
+
+```bash
+# ✅ Conformant: {amount} is an argument to printf, inside command substitution.
+#   The outer "..." wraps the RESULT of $(...), not the placeholder.
+echo "$(printf 'amount=%d' {amount})"
+
+# ❌ Non-conformant: {amount} is inside a literal double-quoted string.
+echo "amount={amount}"
+```
+
+Conformant banks SHOULD use a parser that distinguishes these two contexts when checking templates at ingest time. A naive regex looking for `{name}` adjacent to `"` will produce false positives on the conformant first form; the parser must recognize `$(...)` as a command-substitution context where placeholders are at argument boundaries to the inner command.
 
 **Unquoted bypass** (rarely needed):
 
@@ -411,6 +448,14 @@ A skill bank MUST persist subscriptions in some queryable storage. Each subscrip
 id: "<arbitrary local identifier>"
 source_type: "git" | "url"
 
+# Source-specific fields:
+#   When source_type == "git": subscription targets a versioned git repository.
+#     The bank resolves refs to commit hashes; can pin SHAs; supports tags;
+#     supports signing. This is the production-recommended mode.
+#   When source_type == "url": subscription targets a server-hosted skills-index.json
+#     directly. No git semantics — no SHA, no tags, no signing. Suitable only for
+#     provenance Levels 0-1 (§5.1). Server-hosted skills (§3.3) use this mode.
+
 # git subscriptions:
 repo: "github.com/owner/repo"
 ref_requested: "v1.2.0"               # tag, branch, or hash the user specified
@@ -419,6 +464,7 @@ url_template: "..."                   # optional, overrides built-in (§3.2)
 
 # url subscriptions:
 index_url: "https://example.com/skills-index.json"
+last_etag: "..."                      # optional pseudo-hash from HTTP ETag (§7.1)
 
 # common:
 auto_update: false                    # if true, sync follows ref; if false, manual approval required
@@ -426,6 +472,8 @@ last_synced: "2026-04-28T..."
 verify_signature: true                # if true, refuse to ingest unsigned tags (§5)
 trusted_keys: ["fingerprint1", "..."]
 ```
+
+Banks operating at Provenance Level 2 or higher (§5.1) MUST refuse subscriptions with `source_type: "url"` since those lack commit hashes for pinning.
 
 Storage of the subscription record is implementation-defined. The reference implementation in [`IMPLEMENTATION.md`](./IMPLEMENTATION.md) uses just-bash-data's `db` collection; other banks may use SQLite, a flat file, or any equivalent.
 
@@ -447,7 +495,9 @@ Sections are joined by `". "` (period + space). The full string is fed as a sing
 2. Drop `examples[].intent` section, in reverse order (drop the last example first).
 3. Drop trailing characters of `description` (preserving `title` + `use_when` always).
 
-Banks MUST NOT silently produce embeddings of truncated input without recording the fact: `provenance.embedding_truncated: true` SHOULD be set in the index.
+If `title + use_when` ALONE exceeds the model's max input (an unusual but possible case with very small embedding models — e.g., 256-token limit), the bank MUST refuse to ingest the skill and surface an error like `embedding model context too small for skill <id> (need ≥ N tokens, model accepts M)`. The bank MUST NOT produce a degraded embedding from truncated `title + use_when` — that would silently destroy retrieval quality. Operators SHOULD then reconfigure their bank with a model that accepts longer inputs (most modern embedding models support ≥ 512 tokens; many support 8K+).
+
+Banks MUST NOT silently produce embeddings of truncated input without recording the fact: `provenance.embedding_truncated: true` SHOULD be set in the index when truncation occurred at the `description` / `examples` / `tags` level.
 
 Banks MUST NOT use **different** embedding models for different skills within the same index, nor for the indexed skills versus the agent's queries. Mixed-model search is undefined.
 
@@ -486,7 +536,7 @@ A bank operating in sandbox mode (§2.10) MUST:
 - Intercept network calls and check against `network`.
 - Restrict filesystem to a per-skill scratch directory (`$AGENT_SCRATCH`).
 - Prevent process spawning beyond `required_commands`.
-- Block access to env vars not in `required_env`.
+- Block access to env vars not in `required_env ∪ optional_env`. (`required_env` is the presence-required set; `optional_env` extends the read-access set without making them mandatory. A skill that does not declare any env access at all has zero env-var visibility under sandbox mode, even if such variables exist on the host.)
 
 Sandboxing is an OPTIONAL bank feature; non-sandboxed banks MUST document the trust boundary they offer.
 
@@ -513,15 +563,15 @@ Audit data lives only locally on the consumer's machine. Banks MUST NOT transmit
 
 ### 5.1 Provenance verification levels
 
-Banks MAY require one of these levels per subscription:
+Banks MAY require one of these levels per subscription. **All levels still require URLs to conform to §1.1** (a valid host + URL template); the levels add successive trust layers on top of that.
 
-- **Level 0 (no verification)**: any URL accepted. Suitable for development.
-- **Level 1 (TLS only)**: HTTPS chain validates the source domain. Default for most consumers.
-- **Level 2 (commit pinning)**: `<ref>` MUST be a commit hash, not a tag. Tag pins are resolved to a hash but stored only as the hash.
-- **Level 3 (signed tags)**: the git tag MUST be signed by a key in `trusted_keys`. Verified via `git verify-tag`.
-- **Level 4 (Sigstore + Rekor)**: signature MUST be present in the public Sigstore transparency log and not revoked.
+- **Level 0 (no verification)**: source URL is accepted as-is; no signature or hash check beyond URL conformance and HTTPS transport (which the spec assumes throughout). Suitable for development.
+- **Level 1 (TLS only)**: HTTPS chain validates the source domain. The bank refuses HTTP-only sources. Default for most consumers.
+- **Level 2 (commit pinning)**: `<ref>` MUST be a commit hash, not a tag. Tag pins are resolved to a hash by the bank, then re-stored as the hash; the original tag is preserved only as `ref_requested` for human readability.
+- **Level 3 (signed tags)**: the git tag MUST be signed by a key in `trusted_keys`. Verified via `git verify-tag` or equivalent. Implies Level 2.
+- **Level 4 (Sigstore + Rekor)**: signature MUST be present in the public Sigstore transparency log and not revoked. Implies Level 3.
 
-Level 0 banks accept any source. Level 2+ banks REJECT subscriptions to server-hosted skills (§3.3) since those have no commit hashes.
+Level 2+ banks REJECT subscriptions to server-hosted skills (§3.3), since those have no commit hashes. Server-hosted is feasible only at Levels 0–1.
 
 ### 5.2 Trusted-key management
 
@@ -633,17 +683,21 @@ Implementations MUST NOT add features that violate these invariants without an o
 
 ## 9. Reserved field names
 
-Future spec versions may add fields. To prevent collisions, the following are reserved:
+Future spec versions may add fields. To prevent collisions, the following are reserved at the top level of the frontmatter and MUST NOT be declared by skill authors:
 
-- Anything under `provenance.*` (§2.5).
-- `deprecated`, `removed`, `inserted_at`, `updated_at`, `last_synced`, `usage_count`, `avg_rating`, `success_rate`, `embedding_truncated` (these are bank-managed fields, not author-declared).
+- `provenance` (entire object — §2.5; bank-computed at ingest).
+- `deprecated`, `removed` (bank-set on superseded skills during sync).
+- `inserted_at`, `updated_at`, `last_synced` (bank-set timestamps).
+- `usage_count`, `avg_rating`, `success_rate` (bank-computed from audit signals).
 
-Vendor-specific fields MUST go in `metadata`:
+Vendor-specific or extension fields MUST go inside `metadata`:
 
 ```yaml
 metadata:
   vendor_specific_field: "..."
 ```
+
+Banks ingesting a skill that declares any reserved field at the top level MUST log a warning. Banks operating in strict mode MUST refuse such skills.
 
 ## 10. Conformance levels
 
@@ -658,9 +712,17 @@ metadata:
 - **B1 (Consumer-conformant)**: ingests A1+ skills (any source type), performs embedding per §4.2, supports retrieval and execution per §4.
 - **B2 (Strict consumer)**: B1 + provenance Level 2+ enforced + sandbox mode + audit log + `applicable_when` filtering.
 
-### 10.3 Forward compatibility
+### 10.3 Forward + backward compatibility
 
-A bank declaring schema_version `0.1` ingesting a skill with schema_version `0.2` SHOULD attempt to parse known fields and ignore unknown ones. If unknown fields are required for correct execution (e.g., a hypothetical `pre_check`), the bank MUST refuse to execute and surface the schema mismatch.
+A bank declares the highest schema version it fully supports. Encountering a skill with schema version `X.Y`:
+
+- If `X.Y` is **lower than or equal to** the bank's max supported version: the bank MUST ingest and execute the skill. Fields the bank doesn't recognize (added in PATCH-level spec edits but not visible in the bank's stale parser) MUST be preserved verbatim in the index but treated as opaque.
+
+- If `X.Y` is **higher within the same MAJOR**: the bank SHOULD attempt to parse known fields and ignore unknown ones. The skill is ingested in "best-effort" mode — execution may proceed if all known-required fields are present. If a known-required field is missing in the parsed subset (e.g., the skill declares `command_template_v2` introduced in 0.3 but the bank only knows `command_template` from 0.1, and the skill omitted the older field intentionally), the bank MUST refuse with a clear schema-mismatch error.
+
+- If `X.Y` differs in **MAJOR**: the bank MUST refuse to ingest. Schemas with different MAJOR versions are not assumed parsable. The operator is notified of the mismatch and SHOULD upgrade the bank or ask the publisher for a compatibility version.
+
+This rule is concrete: it does not depend on the bank "guessing" which fields are critical. The contract is **schema_version match within MAJOR + presence of known-required fields**.
 
 ## 11. Spec evolution
 
