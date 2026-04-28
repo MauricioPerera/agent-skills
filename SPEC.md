@@ -1,11 +1,13 @@
 # agent-skills — Specification
 
-**Version**: 0.3.3 (draft)
+**Version**: 0.4.0 (draft)
 **Status**: Open for comment. Schema and protocol are subject to change before v1.0.0.
 
-**Schema version** (the value embedded in `SKILL.md` files): still `"0.1"` — v0.3 (and the v0.3.1 / v0.3.2 / v0.3.3 patches) are purely additive. No breaking changes to the SKILL.md format. v0.2.x banks remain conformant.
+**Schema version** (the value embedded in `SKILL.md` files): still `"0.1"` — v0.4 is additive (new normative section §5.4 specifying the Level 4 verification interface; existing fields unchanged). No breaking changes to the SKILL.md format. v0.2.x banks remain conformant.
 
-**v0.3.3** adds an optional `provenance.signature_identity` field for `"sigstore"`-method tags (§5.1). The Fulcio cert's Subject Alternative Name (SAN) carries the OIDC subject (email or workflow URI) and Fulcio extension OID `1.3.6.1.4.1.57264.1.1` (or `.1.8`) carries the OIDC issuer. Banks SHOULD surface both. The reference CLI v0.16.0 ships extraction (cross-impl parity validated continuously). **Extraction is not verification**: the identity is what the cert *claims*; verifying the claim against Rekor is Level 4 work and remains queued.
+**v0.4.0** formalizes the **Level 4 client-side verification interface** in §5.4. The previous patches (v0.3.1 / v0.3.2 / v0.3.3) added optional fields *describing* what a bank had observed; v0.4.0 specifies what a bank operating at Level 4 must *do* to upgrade a `"sigstore"`-method tag from "host says invalid" to "client-verified valid" — in other words, the contract that resolves the Sigstore-on-host trap. The reference CLI v0.17.0 lands the parsing primitives (Rekor entry decoding, public-instance pinning); the verification primitives (inclusion-proof Merkle math, checkpoint signature, Fulcio chain) are queued for v0.18.
+
+**v0.3.3** added an optional `provenance.signature_identity` field for `"sigstore"`-method tags (§5.1). The Fulcio cert's Subject Alternative Name (SAN) carries the OIDC subject (email or workflow URI) and Fulcio extension OID `1.3.6.1.4.1.57264.1.1` (or `.1.8`) carries the OIDC issuer. Banks SHOULD surface both. The reference CLI v0.16.0 ships extraction (cross-impl parity validated continuously). **Extraction is not verification**: the identity is what the cert *claims*; verifying the claim against Rekor is Level 4 work and remains queued.
 
 **v0.3.2** widened `provenance.signature_method` to `"gpg" | "ssh" | "sigstore"` (§5.1). The reference CLI v0.15.0 ships SSH-tag detection. The same patch documents the **Sigstore-on-host trap**: a properly-signed Sigstore tag may legitimately receive a `bad_cert` verdict from the host once the short-lived Fulcio cert expires, so a `"sigstore"`-method tag with `status: "invalid"` is **ambiguous** without client-side Rekor verification (Level 4) — *not* equivalent to "forged".
 
@@ -782,6 +784,46 @@ The Level 3 split into 3a (host-verified) and 3b (client-verified) reflects a re
 - High-trust automation (financial, ops): **Level 4 (Sigstore + Rekor)** — adds a public, append-only audit log of every signature, detects key rotation against the transparency log.
 
 Banks SHOULD expose `signature_status` and `signed_by` on every retrieval result so the agent (or its supervisor) can decide per-call whether to act on a skill of a given trust level.
+
+### 5.4 Level 4 client-side verification interface *(new in v0.4)*
+
+This section specifies the **contract** a bank MUST implement to claim Level 4 verification. It does NOT mandate a particular implementation — banks MAY use the `@sigstore/verify` library, hand-rolled primitives, or any other path that meets the contract.
+
+The motivation is the **Sigstore-on-host trap** documented in §5.1: a properly-signed Sigstore tag will receive an `invalid` verdict from a host that re-validates the Fulcio cert at lookup time, because Fulcio certs are short-lived (~10 minutes). For `signature_method: "sigstore"` tags, the only sound trust path is client-side verification against the Rekor transparency log + Fulcio root of trust. Level 4 is that path.
+
+**5.4.1 Inputs.** A Level 4 verifier is given:
+1. The CMS payload from `verification.signature` (PEM-armored, `-----BEGIN SIGNED MESSAGE-----`).
+2. The signed payload from `verification.payload` (the tag content that was hashed and signed).
+3. (Optional) Subscription-level identity expectations:
+   - `expected_subject` — string match on the Fulcio cert's first SAN entry.
+   - `expected_issuer` — exact-match on the Fulcio OIDC-issuer extension value.
+
+**5.4.2 Verification steps.** The verifier MUST perform all of the following, in any order, and MUST fail closed (verdict = "invalid") if any step fails:
+
+1. **Parse the CMS payload.** Extract the first X.509 cert (the Fulcio leaf cert) and the signed digest. (v0.16+ banks already do this for identity extraction; the same parser drives Level 4.)
+
+2. **Validate the Fulcio cert chain.** The leaf cert MUST chain to a pinned Fulcio root certificate. Banks SHOULD obtain Fulcio roots via Sigstore's TUF repository at `https://tuf-repo-cdn.sigstore.dev/`; banks MAY pin a static root for simplicity, but MUST document the rotation policy.
+
+3. **Locate the Rekor entry.** Compute the artifact hash that Rekor expects for this signature kind (gitsign uses `hashedrekord` v0.0.1; the artifact-hash semantics are documented in `gitsign`'s source). Query the public Rekor instance at `https://rekor.sigstore.dev` (or a configured private instance) for an entry whose `body.spec.data.hash.value` matches AND whose `body.spec.signature.publicKey.content` decodes to the same Fulcio cert from step 1. There MAY be multiple matching entries (e.g., re-signing); the verifier SHOULD accept the oldest matching entry whose `integratedTime` is within the cert's validity window.
+
+4. **Verify the inclusion proof.** Compute the Merkle root from the entry's leaf hash (defined as `RFC6962-style` SHA-256 of `0x00 || entry.body`) and the proof's audit hashes (`hashes`, leaf-to-root order). The computed root MUST equal `inclusionProof.rootHash`. The proof's `logIndex` is the **local** position within the shard's tree (identified by `entry.logID`), NOT the global `entry.logIndex` — verifiers that confuse the two will reject valid proofs. The proof's `treeSize` MUST match the size declared in the checkpoint body.
+
+5. **Verify the checkpoint signature.** The `inclusionProof.checkpoint` is a [C2SP signed-note](https://c2sp.org/signed-note): a 4-line body (`origin / treeSize / rootHash-base64 / blank`) followed by a signature line of the form `— <key-name> <base64-encoded-blob>`. The base64 blob is `<4-byte-key-hint> || <raw-ECDSA-P-256-signature>`. The signature MUST verify against Rekor's pinned public key (also obtained via TUF, or pinned statically with documented rotation policy), with the body bytes (lines 1-4 followed by a single `\n`) as the message.
+
+6. **Verify integrated time within cert validity.** `entry.integratedTime` MUST fall within the leaf cert's `notBefore`/`notAfter` window. (Fulcio certs are valid ~10 minutes; if Rekor recorded the entry within that window, the signing event was real even though the cert has since expired.)
+
+7. **Verify identity (if specified).** If the subscription supplies `expected_subject` and/or `expected_issuer`, the cert's SAN and Fulcio OIDC-issuer extension MUST match exactly. Mismatch is a verification failure.
+
+**5.4.3 Result.** On success, the bank MAY override the host's `signature_status` to `"valid"` even when the host returned `"invalid"` with reason indicating cert expiry (`"bad_cert"`, `"expired"`, etc.) — this is the **only** legitimate way to upgrade the verdict on a `"sigstore"`-method tag. Banks MUST NOT upgrade the verdict for any other reason or any other method.
+
+A bank that successfully verifies a tag at Level 4 SHOULD record the path taken in `provenance.signature_verification_path` (e.g., `["rekor", "fulcio"]`) and the local Rekor entry coordinates (`provenance.rekor_log_index`, `provenance.rekor_uuid`) so an auditor can re-verify offline against the same entry.
+
+**5.4.4 What v0.4.0 standardizes vs. defers.** This section specifies the verification *contract* — what banks must do, not how. Reference-implementation work proceeds in two phases:
+
+- **Phase 1 (CLI v0.17.0)**: Rekor entry parsing + public-instance pinning + entry fetch by UUID. No verification. Operators can inspect what Rekor *claims* about an entry.
+- **Phase 2 (CLI v0.18.0+)**: full verification (Merkle math + checkpoint signature + Fulcio chain + identity matching). Implementation may use `@sigstore/verify` (audited Sigstore-project library) or hand-rolled primitives — the spec does not prescribe.
+
+Until Phase 2 ships, no bank can claim Level 4 verification. Banks operating below Level 4 MUST NOT override host verdicts for `"sigstore"`-method tags, and SHOULD continue to surface `"sigstore"`-method invalid verdicts as **ambiguous** per §5.1's Sigstore-on-host trap rule.
 
 ## 6. Versioning
 
