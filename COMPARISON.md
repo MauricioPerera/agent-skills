@@ -39,16 +39,39 @@ The headline: **agent-skills wins on token economy, privacy, transparency, and d
 
 ### Where agent-skills wins
 
-1. **Token economics scale**. With 100+ tools, MCP's tool definitions consume thousands of tokens **before the user's question**. agent-skills uses a fixed ~200 tokens regardless. Crossover point: ~10–15 tools. Above that, agent-skills is significantly cheaper.
+1. **Token economics scale**. With 100+ tools, MCP's tool definitions consume thousands of tokens **before the user's question**. agent-skills uses a fixed ~200 tokens regardless. Crossover point: ~10–15 tools.
 
-   | Catalog size | MCP tokens | agent-skills tokens | Skills win |
-   |---:|---:|---:|---:|
-   | 5 | 400 | 200 + 5×200 | 1.2× MCP |
-   | 20 | 1,600 | 200 + 5×200 | 1.3× cheaper |
-   | 100 | 8,000 | 200 + 5×200 | 6.6× cheaper |
-   | 500 | 40,000 | 200 + 5×200 | 33× cheaper |
+   The math has three axes:
+   - `C` = catalog size (number of available tools).
+   - `T` = tasks per session (each task may invoke 0-3 tools).
+   - `S` = skill bank queries per task (typically 1, sometimes 2-3 if first match isn't right).
 
-   (Numbers are rough; per-task agent-skills cost is for 5 retrievals @ 200 tokens. Real values depend on top-K and embedding API call.)
+   Per-tool cost in MCP: ~80 tokens of `name + description + inputSchema` (averaged across tool definitions; varies by tool complexity).
+   Per-call cost: ~50-100 tokens for the function call args.
+
+   Per-query cost in agent-skills:
+   - 1 retrieval = ~250 tokens (top-3 results × ~80 tokens of metadata each, plus the LLM's query formulation).
+   - 1 execution = ~50 tokens (the `command_template` filled with args, returned to the LLM).
+
+   System prompt overhead:
+   - MCP: `80 × C` tokens, fixed.
+   - agent-skills: ~200 tokens, fixed.
+
+   **Per-session totals**:
+
+   | C (catalog) | T (tasks) | S (queries/task) | MCP tokens | agent-skills tokens | Skills factor |
+   |---:|---:|---:|---:|---:|---:|
+   | 5 | 5 | 1 | 400 + 5×100 = **900** | 200 + 5×(250+50) = **1,700** | ✗ MCP cheaper |
+   | 20 | 5 | 1 | 1,600 + 5×100 = **2,100** | 200 + 5×300 = **1,700** | ✓ ~1.2× cheaper |
+   | 100 | 5 | 1 | 8,000 + 5×100 = **8,500** | 200 + 5×300 = **1,700** | ✓ 5× cheaper |
+   | 100 | 5 | 2 | 8,500 | 200 + 10×300 = **3,200** | ✓ 2.7× cheaper |
+   | 500 | 5 | 1 | 40,000 + 5×100 = **40,500** | 200 + 5×300 = **1,700** | ✓ 24× cheaper |
+   | 500 | 50 | 2 | 40,000 + 50×100 = **45,000** | 200 + 100×300 = **30,200** | ✓ 1.5× cheaper |
+
+   Two takeaways:
+   - **Crossover at ~10-20 tools**, depending on tasks per session.
+   - **agent-skills wins decisively for large catalogs even at high task counts**, because per-task cost has a ceiling (`S × 300`) while MCP grows linearly with catalog.
+   - The `S=2` row reflects a realistic case where the agent's first vector match wasn't right and it re-queries with a refined intent.
 
 2. **Credential isolation is structural**. Per §P1 of `SECURITY.md`: secrets never reach the LLM context. With MCP, secrets either flow through args (LLM sees them) or are held by the server (no per-user isolation). agent-skills sidesteps the dilemma by letting the **shell** handle substitution.
 
@@ -144,6 +167,80 @@ Some teams will look at this and think "I'll just have my agent shell out to wha
 - Zero ceremony. Just write bash and call it.
 
 For internal-only, single-team, throwaway use cases, the spec is overkill. For anything intended to outlast a single sprint or to be reused across teams, the spec earns its weight.
+
+## Migration sketch: MCP → agent-skills
+
+If you're operating an MCP server today and want to evaluate agent-skills, here's the rough mapping:
+
+| MCP concept | agent-skills equivalent |
+|---|---|
+| MCP server definition | git repo with `SKILL.md` files |
+| `tools/list` response | `skills-index.json` |
+| Tool's JSON schema | `args` field in frontmatter |
+| Tool description | `description` + `use_when` fields |
+| Server config (env, args) | `required_env` + `applicable_when` |
+| Tool execution | `command_template` substitution |
+| Server-side auth | shell-side env vars (credential isolation) |
+| Tool versioning | git tag on the skill repo |
+| Server discovery | GitHub topics / awesome lists |
+| Server logging | local `skill_audit` |
+
+**Migrating a single tool** (illustrative):
+
+```jsonc
+// MCP tool definition (server-side)
+{
+  "name": "stripe_charge",
+  "description": "Create a charge against a Stripe customer",
+  "inputSchema": {
+    "type": "object",
+    "properties": {
+      "amount": { "type": "integer", "description": "amount in cents" },
+      "currency": { "type": "string", "enum": ["usd", "eur"] },
+      "customer_id": { "type": "string", "pattern": "^cus_" }
+    },
+    "required": ["amount", "currency", "customer_id"]
+  }
+}
+// Execution: server reads STRIPE_KEY from its env, calls Stripe API.
+```
+
+becomes:
+
+```yaml
+# SKILL.md frontmatter
+---
+schema_version: "0.1"
+id: "charge-customer"
+version: "1.0.0"
+title: "Create a Stripe charge"
+description: "Charge a customer via the Stripe Charges API."
+use_when: "user wants to charge an existing Stripe customer a specific amount"
+command_template: "curl -fsSL -u $STRIPE_SECRET_KEY: https://api.stripe.com/v1/charges -d amount={amount} -d currency={currency} -d customer={customer_id}"
+args:
+  amount:
+    type: integer
+    range: [1, 99999999]
+    description: "amount in cents"
+  currency:
+    type: string
+    enum: ["usd", "eur"]
+  customer_id:
+    type: string
+    pattern: "^cus_[a-zA-Z0-9]+$"
+required_env: ["STRIPE_SECRET_KEY"]
+network: ["https://api.stripe.com/v1/charges"]
+license: "MIT"
+---
+```
+
+Notable differences:
+- **MCP**: server holds STRIPE_KEY; no per-user isolation unless the server explicitly implements it.
+- **agent-skills**: each user's shell holds their own `$STRIPE_SECRET_KEY`; isolation is automatic.
+- **MCP**: tool description goes into the LLM context every session (cost: ~80 tokens, regardless of whether the tool is used).
+- **agent-skills**: description is retrieved only when matched against an intent (cost: ~80 tokens, when matched).
+
+For a server with N tools, migration is N skill files in a git repo + a `skills-index.json` + an optional `/llms.txt`. Total effort: ~30 minutes per tool for a clean migration; less for similar tools (mostly copy-paste).
 
 ## The honest verdict
 

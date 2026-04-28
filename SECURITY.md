@@ -23,13 +23,19 @@ Every skill identity contains either a 40-character SHA or refers to one transit
 2. Force-push to overwrite history (detectable; GitHub logs the operation; signed tags prevent it).
 3. Compromise the CDN (would require compromising both git host AND CDN simultaneously; mitigations: pin SHA, verify hash on ingest).
 
-### P3: Sync is one-way (provider → consumer)
+### P3: No first-party telemetry (one-way sync)
 
-The skill bank fetches; it does not POST. Skill providers receive **zero telemetry** about consumers. They cannot:
-- Count installations.
-- See query text or intent.
-- Identify users.
-- Block or rate-limit specific users (beyond what the CDN does for everyone).
+The skill bank fetches; it does not POST telemetry back. Skill providers receive **zero first-party data** about consumers from the bank itself. They cannot:
+- Receive bank-originated install counts, ratings, or error reports.
+- Receive query text or intent.
+- Identify users via bank-emitted IDs.
+
+**Important caveat**: this is *first-party* zero, not absolute. Transport-layer observers see traffic regardless:
+- The git host (GitHub, GitLab) logs every clone with IP + User-Agent.
+- The CDN (jsDelivr, Cloudflare) logs every request.
+- The embedding model API (if remote) sees every query intent.
+
+The spec's invariant is that **the bank does not phone home to the skill author/provider**. What network operators see at the transport layer depends on the operator's choice of CDN, embedding model, and network configuration. Operators concerned about transport-level observability should: use locally-hosted embedding models, fetch via Tor or VPN, or self-host the CDN.
 
 The skill bank's audit log lives only on the consumer's machine.
 
@@ -69,13 +75,19 @@ A bad-faith provider publishes a skill that, when executed, exfiltrates data, ru
 
 An attacker gains commit access to `github.com/stripe/agent-skills` and pushes a malicious update.
 
-**Mitigations**:
-- **SHA pinning**: consumers running with `auto_update: false` continue using the pre-compromise SHA. They are completely insulated.
-- **Signed tags + key rotation**: if the compromise is at the commit-credential level (not the GPG key), `git verify-tag` fails for the malicious push. Skill banks with `verify_signature: true` reject the new tag.
-- **Branch protection** (provider-side): GitHub branch protection rules can require signed commits, prevent force-push, require review. These are provider-side responsibilities.
-- **Transparency monitoring**: third-party services (e.g., a `agent-skills-watch` aggregator) can monitor for force-pushes and alert subscribers.
+**Mitigations** (consumer-side, what the spec controls):
+- **SHA pinning**: consumers running with `auto_update: false` continue using the pre-compromise SHA. They are completely insulated until they manually re-pin.
+- **Signed tag verification**: if the compromise is at the commit-credential level (not the GPG key), `git verify-tag` fails for the malicious push. Skill banks with `verify_signature: true` reject the new tag.
+- **Compare against last-approved baseline**: per `SPEC.md` §7.4, banks SHOULD diff every prospective update against the operator's last manually-approved state, not just the previous auto-synced state. This makes accumulated drift visible across multiple sync cycles.
+- **Transparency monitoring**: third-party watch services can subscribe to repos and alert on force-pushes, tag movements, or unsigned commits. Out-of-spec but enabled by the architecture.
 
-**Residual risk**: a sophisticated attacker who compromises both commit credentials AND the GPG signing key can publish a signed malicious release. Mitigations: hardware-backed signing keys (YubiKey), multiple-signer requirement (e.g., release engineering team must co-sign).
+**Provider-side recommendations** (not controlled by the spec, but worth recording):
+- GitHub branch protection rules requiring signed commits + reviews + linear history.
+- Hardware-backed signing keys (YubiKey, secure enclave).
+- Multi-signer release process (e.g., release engineering team must co-sign).
+- Sigstore / cosign for transparency-log-backed signatures (Level 4 conformance).
+
+**Residual risk**: an attacker compromising both commit credentials AND signing key material can publish a signed malicious release. The Level-4 (Sigstore) mitigation reduces this further by requiring signatures to land in a public append-only log; revocation becomes detectable after the fact. Defense-in-depth at the provider organization level remains essential — the spec cannot replace good ops.
 
 ### T3: CDN compromise
 
@@ -103,12 +115,23 @@ An attacker publishes `github.com/striipe/agent-skills` (note the extra "i") hop
 
 Even if the skill is benign, the LLM might emit values for `args` that cause harm (e.g., `customer_id: "; rm -rf /"`).
 
-**Mitigations** (mandatory per §4.4 of `SPEC.md`):
-- **Substitutions are shell-quoted by default**. The skill bank wraps every value in single quotes, escaping embedded single quotes correctly. `customer_id: "; rm -rf /"` is inserted as `'; rm -rf /'` — a literal string, not executable code.
-- **Args validation**: when `args.<name>.pattern` is declared, values are matched against the regex before substitution. A `customer_id` with pattern `^cus_[a-zA-Z0-9]+$` rejects the malicious value at the validation layer.
-- **`unquoted: true` opt-in**: skill authors needing raw substitution must declare it explicitly, and even then values containing shell metacharacters (`;`, `&`, `|`, `$`, `` ` ``, `(`, `)`, `<`, `>`, newline) **MUST** be rejected before insertion.
+**Mitigations** (mandatory per §4.4 + §2.6 of `SPEC.md`):
 
-**Residual risk**: a skill author who declares `unquoted: true` AND fails to declare a strict `pattern` opens a command injection surface. Skill banks **MAY** refuse to ingest such skills, treating them as conformance violations.
+- **Substitutions are single-quoted by default**. The skill bank wraps every string value in single quotes, escaping embedded single quotes as `'\''`. `customer_id: "; rm -rf /"` is inserted as `'; rm -rf /'` — a literal string passed to the next argument, not executable code.
+
+- **Placeholders MUST appear in argument position** (D16). Templates that embed `{placeholder}` inside literal `"..."` or `'...'` are non-conformant; banks SHOULD refuse them at ingest. This eliminates the "what context am I in?" ambiguity that complex shell quoting otherwise creates.
+
+- **Args validation via positive patterns**. When `args.<name>.pattern` is declared, the value is matched against the regex BEFORE substitution. A `customer_id` with pattern `^cus_[a-zA-Z0-9]+$` rejects malicious values at the validation layer, regardless of how they would be quoted later. **Pattern allowlisting is preferred over metacharacter denylisting** because allowlists fail closed (anything not explicitly permitted is rejected) while denylists fail open (any character not enumerated slips through).
+
+- **`unquoted: true` opt-in**: skill authors needing raw substitution MUST declare it explicitly. The spec REQUIRES that any `unquoted: true` arg also declare a `pattern` that rejects ALL shell metacharacters. Banks MUST refuse to ingest skills that violate this constraint. The full set of characters that an unquoted-arg pattern MUST reject:
+
+  ```
+  ; & | $ ` ( ) < > * ? [ ] \ " ' { } # ~ space tab newline
+  ```
+
+  An author writing `pattern: "^[a-zA-Z0-9_-]+$"` for an `unquoted` arg is safe (none of the forbidden chars match). An author writing `pattern: ".*"` is rejected by conformant banks.
+
+**Residual risk**: a non-conformant bank that does NOT enforce these constraints is vulnerable to a malicious skill author. Spec compliance and a JSON-Schema validation step at ingest are the recommended defense. Operators SHOULD verify their bank implementation enforces §2.6 before deploying in trust-sensitive contexts.
 
 ### T6: Information leak via embedding API
 

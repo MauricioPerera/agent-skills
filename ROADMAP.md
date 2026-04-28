@@ -2,7 +2,18 @@
 
 This document tracks **what's planned, what's open, and what's deliberately out of scope**. The spec evolves in the open via PRs against this file and the canonical `SPEC.md`.
 
-## Current state — v0.1.0 (draft)
+## Current state — v0.1.1 (draft)
+
+Resolved since v0.1.0:
+- Substitution rules formalized (C3, D16).
+- Shell semantics declared (C6, D17).
+- Provenance moved out of file to ingest-time computation (C1, D11 corrected).
+- URL derivation rules (C2).
+- Token math clarified in COMPARISON (S9).
+- JSON Schema shipped.
+- IMPLEMENTATION.md separated from canonical spec.
+
+## Original state — v0.1.0 (draft)
 
 Shipped:
 - Canonical `SKILL.md` schema (frontmatter + body).
@@ -135,12 +146,7 @@ Current leaning: **git-specific in v1**, with a generic content-hashed escape ha
 
 ### Q5: How does a consumer know when a SHA-pinned skill is "outdated"?
 
-If you pin to SHA `abc123` and the publisher releases new commits on top, the consumer's pinned skill is "behind". The spec doesn't say how to detect this. Options:
-- The bank periodically resolves the latest tag; if new, notify the operator.
-- Operators must manually check.
-- Aggregators publish "newer-than-X" feeds.
-
-Current leaning: **the bank's sync daemon checks for updates without auto-applying**. UI surfaces "5 of your subscriptions have updates available".
+**Resolved in v0.1.1**: `SPEC.md` §7.2 defines re-sync behavior with `auto_update` flag. `SPEC.md` §7.4 introduces "compare against last-approved baseline" so multiple intermediate auto-syncs don't hide cumulative drift. Banks notify operator on new versions; auto-update is opt-in.
 
 ### Q6: Skill private packages
 
