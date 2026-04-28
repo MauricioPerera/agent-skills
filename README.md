@@ -2,7 +2,7 @@
 
 > An open, decentralized **specification** for distributing tools to LLM agents — an alternative to MCP that is **token-efficient**, **transparent**, **immutable**, and **web-native**.
 
-> **Empirical proof of concept**: 35 paraphrased agent intents × 3 embedding models = 105 retrieval evaluations against the public [`agent-skills-pack`](https://github.com/MauricioPerera/agent-skills-pack). Top-1 accuracy: **97-100%**. Top-3 accuracy: **100% across all models**. Full methodology: [BENCHMARK.md](https://github.com/MauricioPerera/agent-skills-cli/blob/main/BENCHMARK.md).
+> **Empirical proof of concept**: 35 paraphrased agent intents × 3 embedding models = 105 retrieval evaluations against the public [`agent-skills-pack`](https://github.com/MauricioPerera/agent-skills-pack). Cosine baseline: **97-100%** top-1. With v0.4.0 audit-based rerank + realistic usage signal: **100%** top-1. Top-3 across all configs: **100%**. Failure modes (e.g., adversarial usage concentration) documented and reproducible — see [BENCHMARK.md](https://github.com/MauricioPerera/agent-skills-cli/blob/main/BENCHMARK.md).
 
 This repository defines a **format and a protocol**. It does not include a runtime. Conformant skill banks can be built atop any sufficient infrastructure (filesystem + vector index + shell). One reference runtime — built on the parallel project [`just-bash-data`](https://github.com/MauricioPerera/just-bash-data) — is described in [`IMPLEMENTATION.md`](./IMPLEMENTATION.md), but the spec proper is implementation-agnostic.
 
