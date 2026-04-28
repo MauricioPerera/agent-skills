@@ -2,6 +2,26 @@
 
 All notable changes to the `agent-skills` specification are documented here. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the spec adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.3.0] — 2026-04-28
+
+Additive specification update. **Schema version remains `"0.1"`** (no SKILL.md format changes); this document is bumped 0.2.0 → 0.3.0 to formalise the per-tenant audit + rerank pattern shipped in [`agent-skills-cli`](https://github.com/MauricioPerera/agent-skills-cli) v0.12.0. Existing v0.2.x banks and packs remain conformant.
+
+### New normative section
+
+- **§4.5.1 Per-tenant audit scoping** (NEW). The `audit_entry.tenant` field is now formalised as an optional, free-form string identifier for multi-tenant skill-bank deployments (shared CI runners, team setups, multi-user agent infra). When set on `exec`, the bank persists it on the audit entry. When passed to a query, the bank MUST filter the audit log to matching entries BEFORE computing rerank counts — preventing one tenant's history from bleeding into another tenant's retrieval boost.
+
+  Worked example included in the spec: Alice's 50-use concentrated history on `base64-encode` (the v0.4-documented stress scenario) becomes invisible to Bob's queries when Bob queries with `--tenant bob`. Single-user deployments that never set the field get v0.2 behaviour bit-identical.
+
+  Privacy invariant P3 (§8) extended implicitly: cross-tenant rerank leakage is forbidden — banks MUST NOT surface one tenant's audit signal in another tenant's results. The filter described in §4.5.1 achieves this.
+
+### Why no schema bump
+
+The `tenant` field is at the audit-log level, not in `SKILL.md`. The schema version embedded in skill files is unchanged at `"0.1"`. Pack authors have NOTHING to update. Banks that don't implement the feature treat all audit entries as a single tenant — equivalent to v0.2 semantics.
+
+### Status
+
+The reference CLI's [v0.12.0 release](https://github.com/MauricioPerera/agent-skills-cli/releases/tag/v0.12.0) implements every concrete requirement in this section, including the `^[a-zA-Z0-9._-]{1,64}$` charset (one valid choice; the spec does not mandate a specific regex).
+
 ## [0.2.0] — 2026-04-28
 
 Additive specification update. **Schema version remains `"0.1"`** (no SKILL.md format changes); this document is bumped 0.1.1 → 0.2.0 to formalise patterns that emerged from the reference CLI's v0.5.0–v0.11.0 implementation cycle. Existing v0.1.x banks and packs remain conformant.
@@ -130,6 +150,7 @@ Initial draft specification.
 - Reference implementation has been stable for 3 months.
 - A third-party security audit has been resolved.
 
+[0.3.0]: https://github.com/MauricioPerera/agent-skills/releases/tag/v0.3.0
 [0.2.0]: https://github.com/MauricioPerera/agent-skills/releases/tag/v0.2.0
 [0.1.1]: https://github.com/MauricioPerera/agent-skills/releases/tag/v0.1.1
 [0.1.0]: https://github.com/MauricioPerera/agent-skills/releases/tag/v0.1.0

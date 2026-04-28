@@ -187,13 +187,16 @@ The parity is **continuously validated** by [`agent-skills-cli`'s `e2e.yml` work
 
 ## Status
 
-**v0.2.0 — draft.** Additive update to v0.1.1. **Schema version remains `"0.1"`** (no SKILL.md changes). v0.2 formalises three patterns that emerged from the reference-CLI implementation cycle:
+**v0.3.0 — draft.** Additive update to v0.2.0. **Schema version remains `"0.1"`** (no SKILL.md changes). v0.3 formalises one new pattern shipped in the reference-CLI v0.12.0:
+
+- **Per-tenant audit scoping** (§4.5.1, NEW): optional `audit_entry.tenant` field for multi-tenant skill-bank deployments. When set on a query, the bank filters audit entries by tenant BEFORE computing rerank — preventing one tenant's history from bleeding into another's retrieval boost. Single-user deployments that never set the field get v0.2 behaviour bit-identical.
+
+Plus all v0.2 sections continue to apply:
 
 - **Rerank patterns** (§4.3.1): global vs intent-conditional, with empirical failure modes documented.
 - **Bench protocol** (§4.6): `bench-truth.jsonl` format for reproducible retrieval evaluation.
 - **Signature verification trust split** (§5.1, §5.3): Level 3a (host-verified, e.g. GitHub) vs Level 3b (client-verified, `trusted_keys`).
-
-Plus an informative §4.7 documenting the embedding-provider abstraction (name, dim, embed) and three reference provider classes (Cloudflare Workers AI, Ollama, OpenAI-compatible).
+- **Embedding provider abstraction** (§4.7, informative): `(name, dim, embed)` triplet and three reference provider classes (Cloudflare Workers AI, Ollama, OpenAI-compatible).
 
 The reference primitives (`db` + `vec` + encryption + IVF) are stable in [`just-bash-data@1.1.0`](https://www.npmjs.com/package/just-bash-data); the spec on top of them is what this repo defines.
 

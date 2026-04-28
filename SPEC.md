@@ -1,9 +1,9 @@
 # agent-skills — Specification
 
-**Version**: 0.2.0 (draft)
+**Version**: 0.3.0 (draft)
 **Status**: Open for comment. Schema and protocol are subject to change before v1.0.0.
 
-**Schema version** (the value embedded in `SKILL.md` files): still `"0.1"` — v0.2 of this document is purely additive. No breaking changes to the SKILL.md format. v0.1.x banks remain conformant; v0.2.x banks gain new informative sections describing patterns that emerged from the v0.1.0 → v0.1.1 → reference-CLI v0.5.0–v0.11.0 implementation cycle.
+**Schema version** (the value embedded in `SKILL.md` files): still `"0.1"` — v0.3, like v0.2, is purely additive. No breaking changes to the SKILL.md format. The v0.3 changes are bank-side audit log + rerank semantics; they describe patterns that the reference CLI v0.12.0 already implements. v0.2.x banks remain conformant.
 
 This document defines a **format and a protocol**. It does not define a runtime, a storage backend, or a UI. Conformant implementations MAY be built atop any sufficient infrastructure (filesystem + vector index + shell). One reference runtime is described in [`IMPLEMENTATION.md`](./IMPLEMENTATION.md), but the spec itself is implementation-agnostic.
 
@@ -595,6 +595,41 @@ timestamp: "<ISO-8601>"
 Audit data lives only locally on the consumer's machine. Banks MUST NOT transmit audit data to skill providers (privacy invariant P3, §8).
 
 The `intent` field, when present, enables intent-conditional rerank (§4.3.1). Banks supporting that rerank pattern MUST persist `intent` alongside other audit fields. Banks MAY also use `intent` for offline analytics, retrospective query-quality evaluation, etc. — the field is local-only like the rest of the audit log.
+
+### 4.5.1 Per-tenant audit scoping *(new in v0.3)*
+
+When the bank is shared by multiple agents or users (multi-tenant deployment — shared CI runners, team setups, multi-user agent infra), the audit log SHOULD record a per-call `tenant` identifier and rerank SHOULD scope past entries by tenant.
+
+**Schema (additive to §4.5):**
+
+```yaml
+audit_entry:
+  ...                       # all fields from §4.5
+  tenant: "alice"           # optional, v0.3+. Free-form string identifying
+                            # the agent / user / role making this exec call.
+```
+
+The field is **optional**. Audit logs and entries that omit it (e.g., everything written by v0.2-conformant banks) are valid v0.3 audit data — they represent a single, shared tenant and rerank uses every entry.
+
+**Format**: implementations MAY enforce a tighter charset to keep the value safe across audit-log JSON, filenames, query parameters, etc. The reference CLI uses `^[a-zA-Z0-9._-]{1,64}$`. The spec does not mandate a specific regex, only that the value be a non-empty string.
+
+**Rerank semantics (per SPEC §4.3.1):**
+
+When the bank's query API receives a `tenant` parameter:
+
+1. **Filter the audit log to entries where `audit_entry.tenant === query.tenant`** before computing usage_count / conditional_count / recency_boost.
+2. Run the rerank pattern (global or intent-conditional) on the filtered subset.
+3. Return the top-K. The result includes the per-skill counts as in v0.2; those counts now reflect the tenant-filtered universe.
+
+When the bank's query API does NOT receive a `tenant` parameter, behaviour is identical to v0.2: every audit entry participates in the boost.
+
+**Worked example.** Alice and Bob share a bank. Alice has called `base64-encode` 50 times for "encode credential" intents; Bob has never used base64. Without tenant scoping (v0.2), a query from Bob for "fetch URL contents" suffers the v0.4-documented stress regression — `base64-encode` ranks above `http-get` because its global usage count overwhelms cosine. Under v0.3 per-tenant scoping with `query.tenant === "bob"`, Alice's audit entries are filtered out before computing the boost, and Bob's queries return cosine-correct results.
+
+**Privacy invariants (§8):**
+- P3 still holds: per-tenant audit data still lives only locally; banks MUST NOT transmit it to skill providers.
+- A new implication: when one tenant queries the bank, the bank MUST NOT leak another tenant's audit history through the rerank result. The filter described above achieves this.
+
+**Implementations:** the reference CLI [`agent-skills-cli`](https://github.com/MauricioPerera/agent-skills-cli) v0.12.0+ implements this section. Operators set `--tenant <id>` on `exec`, `query`, and `bench`.
 
 ### 4.6 Bench protocol *(new in v0.2)*
 
