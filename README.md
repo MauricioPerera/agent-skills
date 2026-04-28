@@ -153,6 +153,11 @@ That's it. Your skill pack is now discoverable via:
 - GitHub topic: `agent-skills`
 - Pull requests from the world
 
+## Sister projects
+
+- [`agent-skills-cli`](https://github.com/MauricioPerera/agent-skills-cli) — **reference CLI implementation**. Validates SKILL.md files against this spec and resolves command_template against arg values. v0.2.0-alpha shipped covering local-only operations (validate + resolve); v0.2.0 final adds sync + query + exec.
+- [`just-bash-data`](https://github.com/MauricioPerera/just-bash-data) — **storage runtime** providing the `db` (document store) and `vec` (vector search) primitives a conformant skill bank needs. The reference CLI's future `sync` / `query` / `exec` commands integrate with this.
+
 ## Status
 
 **v0.1.1 — draft.** Schema, protocol, and naming are open for iteration. The reference primitives (`db` + `vec` + encryption + IVF) are stable in [`just-bash-data@1.1.0`](https://www.npmjs.com/package/just-bash-data); the spec on top of them is what this repo defines.
