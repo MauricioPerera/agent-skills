@@ -2,6 +2,31 @@
 
 All notable changes to the `agent-skills` specification are documented here. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the spec adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.2.0] — 2026-04-28
+
+Additive specification update. **Schema version remains `"0.1"`** (no SKILL.md format changes); this document is bumped 0.1.1 → 0.2.0 to formalise patterns that emerged from the reference CLI's v0.5.0–v0.11.0 implementation cycle. Existing v0.1.x banks and packs remain conformant.
+
+### New normative sections
+
+- **§4.3.1 Rerank patterns**. Describes the **global** and **intent-conditional** rerank algorithms, with their formulas, the empirical failure mode of global rerank under usage concentration (50 concentrated past uses → top-1 collapses from 97% to 34% on the reference 7-skill / 35-paraphrase corpus), and the recovery profile of intent-conditional (100% top-1 under the same scenario via a `cos(query, past_intent) ≥ threshold` filter). Suggested defaults: `α=0.05`, `β=0.03`, `threshold=0.7`. Banks SHOULD expose the choice to operators and SHOULD support a no-rerank mode.
+- **§4.5 audit `intent` field clarification**. The `intent` field was already in §4.5; v0.2 makes its role in intent-conditional rerank explicit and requires banks supporting that pattern to persist it.
+- **§4.6 Bench protocol**. Standardises the `bench-truth.jsonl` format (JSONL or JSON-array, auto-detected, `{intent, expected}` pairs where `expected` is the **short** skill id for portability). Optional but recommended placement at pack root; an executable convention for measuring retrieval quality. CI integration via non-zero exit on any failure.
+- **§5.1 Level 3 split into 3a (host-verified) and 3b (client-verified)**. Reflects the real operator trade-off between zero-burden trust delegation (3a) and host-independent verification (3b). Documented because the reference CLI implements 3a; v0.11.0+ pre-stages 3b for v0.12+.
+- **§5.3 Verification trust trade-offs**. Explicit table of who's in the trust path under each Level, what each level catches and misses, and recommended posture per deployment type. Makes the cost of choosing a level visible rather than papering over it.
+
+### New informative sections
+
+- **§4.7 Embedding provider abstraction**. Documents the `(name, dim, embed)` triplet that all known providers expose, the requirement that `name` be persisted with the bank's index (so mixing models is detected at load time), and the three reference provider classes (Cloudflare Workers AI, Ollama, OpenAI-compatible `/v1/embeddings`). The provider choice is a local trust decision; the spec only requires consistency.
+
+### Status
+
+- v0.2 of this document is **back-compatible** with v0.1.1. Implementations that conform to v0.1.1 MUST remain conformant under v0.2 by ignoring the additions. The reverse is not guaranteed: a bank that doesn't implement intent-conditional rerank will produce different retrieval results than one that does.
+- The reference CLI [`agent-skills-cli`](https://github.com/MauricioPerera/agent-skills-cli) v0.11.0+ implements every concrete pattern described in v0.2 of this document. The empirical numbers cited in §4.3.1 (97% → 34% under stress, 100% recovery) come from its [BENCHMARK.md](https://github.com/MauricioPerera/agent-skills-cli/blob/main/BENCHMARK.md) on live Cloudflare Workers AI.
+
+### Why no schema bump
+
+A schema-version bump would be required if v0.2 changed the SKILL.md format. It doesn't — every new section either (a) describes bank-internal behaviour (§4.3.1, §4.6, §4.7), (b) clarifies an existing field (§4.5), or (c) refines an existing trust level into sub-levels with the same enumeration values (§5.1). Authors of v0.1.x SKILL.md files have nothing to update.
+
 ## [0.1.1] — 2026-04-28
 
 Substantial rewrite of the v0.1.0 draft after a critical self-review identified 6 critical issues, 10 significant issues, and several missing sections. Schema version remains `"0.1"` (no skill-author-visible breaks); spec document is bumped from 0.1.0 → 0.1.1.
@@ -105,5 +130,6 @@ Initial draft specification.
 - Reference implementation has been stable for 3 months.
 - A third-party security audit has been resolved.
 
+[0.2.0]: https://github.com/MauricioPerera/agent-skills/releases/tag/v0.2.0
 [0.1.1]: https://github.com/MauricioPerera/agent-skills/releases/tag/v0.1.1
 [0.1.0]: https://github.com/MauricioPerera/agent-skills/releases/tag/v0.1.0

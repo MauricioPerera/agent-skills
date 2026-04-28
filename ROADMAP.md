@@ -2,9 +2,19 @@
 
 This document tracks **what's planned, what's open, and what's deliberately out of scope**. The spec evolves in the open via PRs against this file and the canonical `SPEC.md`.
 
-## Current state — v0.1.1 (draft)
+## Current state — v0.2.0 (draft)
 
-Resolved since v0.1.0:
+The spec has been validated end-to-end by the reference CLI [`agent-skills-cli`](https://github.com/MauricioPerera/agent-skills-cli) through 11 minor releases (v0.5.0 → v0.11.0). v0.2 of this document formalises the patterns that crystallised during that cycle:
+
+- **§4.3.1 Rerank patterns** (NEW) — global vs intent-conditional, with documented failure modes and empirical recovery profiles.
+- **§4.5 audit `intent` field** — clarified role in intent-conditional rerank.
+- **§4.6 Bench protocol** (NEW) — `bench-truth.jsonl` format for reproducible retrieval evaluation.
+- **§4.7 Embedding provider abstraction** (NEW, informative) — `(name, dim, embed)` triplet + three reference provider classes.
+- **§5.1 Level 3 split into 3a/3b** — host-verified vs client-verified, with explicit trust trade-offs in §5.3.
+
+Schema version remains `"0.1"`. v0.1.x banks and packs remain conformant.
+
+Resolved earlier (v0.1.1):
 - Substitution rules formalized (C3, D16).
 - Shell semantics declared (C6, D17).
 - Provenance moved out of file to ingest-time computation (C1, D11 corrected).
@@ -13,62 +23,35 @@ Resolved since v0.1.0:
 - JSON Schema shipped.
 - IMPLEMENTATION.md separated from canonical spec.
 
-## Original state — v0.1.0 (draft)
+Status: **draft**. Schema is conservative — additive changes only since v0.1.0. v1.0.0 is feature-complete from the spec's perspective; the path to v1.0 is operational (more implementations, more packs, audit). See §"v1.0.0 — Stable spec" below.
 
-Shipped:
-- Canonical `SKILL.md` schema (frontmatter + body).
-- `/llms.txt` extension and `skills-index.json` machine-readable manifest.
-- Sync protocol for git+CDN skill distribution.
-- Threat model and conformance levels.
-- Privacy invariants (one-way sync, credential isolation).
-- Two reference examples (`placeholder-img`, `charge-customer`).
-- Comparison vs MCP and npm packs.
+## Reference implementation — shipped
 
-Status: **draft**. Schema is unstable. Field names may change. Implementations should treat v0.1.0 as exploratory.
+The work originally listed under [v0.2.0 / v0.3.0 / v0.4.0 / v0.5.0] in earlier ROADMAP versions lives in the [`agent-skills-cli`](https://github.com/MauricioPerera/agent-skills-cli) repo and the wider ecosystem:
 
-## v0.2.0 — Reference implementation
+| Original ROADMAP item | Where it shipped |
+|---|---|
+| `agent-skills sync / query / exec` | CLI v0.2.0 → v0.3.0 |
+| `agent-skills publish` (validate + tag) | CLI v0.8.0 (signed-tag support v0.10.0) |
+| `agent-skills init` (scaffold a pack) | CLI v0.9.0 |
+| `agent-skills bench` (retrieval eval) | CLI v0.7.0 |
+| `agent-skills update` (refresh + GC orphans) | CLI v0.11.0 |
+| Multi-provider embedding integration | CLI v0.6.0 (Cloudflare + Ollama + OpenAI-compatible) |
+| GPG-signed tag verification | CLI v0.10.0 (GitHub API path; client-GPG path tracked for v0.12+) |
+| Per-tenant audit / rerank | tracked for spec v0.3 + CLI v0.12+ |
+| Sigstore + Rekor integration | tracked for spec v0.3 + CLI v0.13+ |
+| Aggregator pattern / discovery UX | tracked for spec v0.3 |
 
-Goal: prove the spec runs end-to-end with real components.
+The reference CLI's BENCHMARK.md provides the empirical numbers that back §4.3.1 in this spec.
 
-Tasks:
-- [ ] CLI tool: `agent-skills sync` — reads `skill_subscriptions`, fetches, validates, embeds, indexes.
-- [ ] CLI tool: `agent-skills query <intent>` — embed query, return top-K skills with metadata.
-- [ ] CLI tool: `agent-skills exec <id> [args...]` — execute a skill with substituted args.
-- [ ] CLI tool: `agent-skills publish` — validate a `SKILL.md`, stamp provenance, prepare commit.
-- [ ] Reference embedding integration: BGE-M3 via Ollama (default) + OpenAI text-embedding-3-small.
-- [ ] Test suite: validate the spec against the reference impl + the example skills.
+## v0.3.0 — Per-tenant + Sigstore + aggregators
 
-Deliverable: a npm package `@agent-skills/cli` and a working demo.
+Goal: complete the trust story (Sigstore + Rekor, audit log isolation in multi-tenant deploys) and solve discovery.
 
-## v0.3.0 — Aggregator pattern
-
-Goal: solve the "how does a user discover skills?" problem without inventing a registry.
-
-Tasks:
-- [ ] Define an aggregator's responsibilities (crawl public GitHub topics, validate skills, surface metadata).
-- [ ] Reference aggregator implementation (could be a static GitHub Pages site that crawls weekly).
-- [ ] Standardize a "skill rating" schema (community signals: stars, install counts, etc.).
-- [ ] Document multiple aggregators coexisting (no central authority).
-
-## v0.4.0 — Trust + signing
-
-Goal: bring conformance level A3 (verified publisher) within reach.
-
-Tasks:
-- [ ] Reference implementation of GPG-signed tag verification.
-- [ ] Reference implementation of Sigstore + Rekor integration.
-- [ ] Trusted-key management UX (import, fingerprint display, rotation).
-- [ ] Document key publication conventions (e.g., `.well-known/agent-skills-key.asc`).
-
-## v0.5.0 — Enrichment + scoring
-
-Goal: make retrieval better than naive nearest-neighbor.
-
-Tasks:
-- [ ] Hybrid retrieval (vector + keyword + tag filtering).
-- [ ] Per-user feedback signals (`usage_count`, `avg_rating`, `last_used`).
-- [ ] Re-ranking with `provenance.publisher_verified` weighting.
-- [ ] Cold-start: how does a new skill bank with no audit history rank skills?
+Open questions:
+- [ ] Per-tenant audit scoping: `audit.jsonl` schema extension or per-tenant directory? Reference CLI tracking this for v0.12.
+- [ ] Sigstore + Rekor: spec-side requirement language; reference CLI tracking for v0.13.
+- [ ] Aggregator pattern: solve "how does a user discover skills?" without a central registry. GitHub Pages site that crawls the `agent-skills` topic weekly is one candidate.
 
 ## v1.0.0 — Stable spec
 

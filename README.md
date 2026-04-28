@@ -171,7 +171,15 @@ That's it. Your skill pack is now discoverable via:
 
 ## Status
 
-**v0.1.1 — draft.** Schema, protocol, and naming are open for iteration. The reference primitives (`db` + `vec` + encryption + IVF) are stable in [`just-bash-data@1.1.0`](https://www.npmjs.com/package/just-bash-data); the spec on top of them is what this repo defines.
+**v0.2.0 — draft.** Additive update to v0.1.1. **Schema version remains `"0.1"`** (no SKILL.md changes). v0.2 formalises three patterns that emerged from the reference-CLI implementation cycle:
+
+- **Rerank patterns** (§4.3.1): global vs intent-conditional, with empirical failure modes documented.
+- **Bench protocol** (§4.6): `bench-truth.jsonl` format for reproducible retrieval evaluation.
+- **Signature verification trust split** (§5.1, §5.3): Level 3a (host-verified, e.g. GitHub) vs Level 3b (client-verified, `trusted_keys`).
+
+Plus an informative §4.7 documenting the embedding-provider abstraction (name, dim, embed) and three reference provider classes (Cloudflare Workers AI, Ollama, OpenAI-compatible).
+
+The reference primitives (`db` + `vec` + encryption + IVF) are stable in [`just-bash-data@1.1.0`](https://www.npmjs.com/package/just-bash-data); the spec on top of them is what this repo defines.
 
 See [`ROADMAP.md`](./ROADMAP.md) for what's planned and [`CHANGELOG.md`](./CHANGELOG.md) for how the spec evolves.
 

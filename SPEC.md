@@ -1,7 +1,9 @@
 # agent-skills — Specification
 
-**Version**: 0.1.1 (draft)
+**Version**: 0.2.0 (draft)
 **Status**: Open for comment. Schema and protocol are subject to change before v1.0.0.
+
+**Schema version** (the value embedded in `SKILL.md` files): still `"0.1"` — v0.2 of this document is purely additive. No breaking changes to the SKILL.md format. v0.1.x banks remain conformant; v0.2.x banks gain new informative sections describing patterns that emerged from the v0.1.0 → v0.1.1 → reference-CLI v0.5.0–v0.11.0 implementation cycle.
 
 This document defines a **format and a protocol**. It does not define a runtime, a storage backend, or a UI. Conformant implementations MAY be built atop any sufficient infrastructure (filesystem + vector index + shell). One reference runtime is described in [`IMPLEMENTATION.md`](./IMPLEMENTATION.md), but the spec itself is implementation-agnostic.
 
@@ -509,11 +511,44 @@ Given a query, the bank MUST:
 
 1. Embed the query with the same model used to index skills.
 2. Run nearest-neighbor search over the index, returning top-`K` (default `K=10`).
-3. Optionally re-rank by `usage_count`, `avg_rating`, `provenance.publisher_verified`, or other signals.
+3. Optionally re-rank by audit-derived signals (see §4.3.1 for known patterns).
 4. Optionally filter by `applicable_when` against the host environment.
 5. Return the top-`N` (default `N=3`) skill identities + selected metadata.
 
 Banks SHOULD support a query option to bypass `applicable_when` filtering for debugging.
+
+#### 4.3.1 Rerank patterns *(new in v0.2)*
+
+When the bank has audit history (§4.5), it MAY re-rank candidates by combining cosine similarity with usage signals. Two patterns are documented; banks MAY implement either, both, or neither, but SHOULD expose the choice to operators:
+
+**Global rerank** — the simple pattern. Add a usage-count and recency boost to every candidate based on the global audit log:
+
+```
+final_score = cosine
+            + α · log(1 + usage_count)
+            + β · recency_boost
+```
+
+where `usage_count` is the total number of audit entries for the skill (across all past intents) and `recency_boost ∈ [0, 1]` decays exponentially with time since the last use. Suggested defaults: `α = 0.05`, `β = 0.03`, recency half-life 7 days.
+
+**Failure mode**: under usage concentration (one skill used dramatically more than others), the boost overwhelms cosine differences and the dominant skill wins unrelated queries. Empirically observed: 50 concentrated past uses on one skill collapses top-1 accuracy from 97% to 34% on the reference 7-skill / 35-paraphrase corpus. Banks SHOULD document this risk.
+
+**Intent-conditional rerank** — counts only past invocations whose recorded `intent` (§4.5) is semantically similar to the current query. Replaces `usage_count` with a query-conditional `n`:
+
+```
+n = |{ past_audit_entry : cos(query_vec, past_intent_vec) ≥ threshold }|
+final_score = cosine
+            + α · log(1 + n)
+            + β · recency_boost_of_relevant_only
+```
+
+where `past_intent_vec` is the embedding of the audit entry's `intent` field and `threshold` is a similarity floor (suggested default `0.7`). Past intents below `threshold` are excluded from both the count and the recency calculation. Banks implementing this pattern MUST embed past intents at query time (lazily, cached) using the same model that indexed the skills.
+
+Empirically validated to recover 100% top-1 under the same usage-concentration scenario where global rerank degrades to 34% — by activating the boost only on queries whose past intents are semantically related.
+
+**No-rerank mode** — banks SHOULD support disabling rerank entirely (operator opt-out). Cosine alone is the safe baseline for adversarial / multi-tenant audit logs.
+
+The bank's choice of rerank pattern, weights, and threshold is a deployment decision. The spec does not mandate any particular default.
 
 ### 4.4 Execution contract
 
@@ -559,6 +594,67 @@ timestamp: "<ISO-8601>"
 
 Audit data lives only locally on the consumer's machine. Banks MUST NOT transmit audit data to skill providers (privacy invariant P3, §8).
 
+The `intent` field, when present, enables intent-conditional rerank (§4.3.1). Banks supporting that rerank pattern MUST persist `intent` alongside other audit fields. Banks MAY also use `intent` for offline analytics, retrospective query-quality evaluation, etc. — the field is local-only like the rest of the audit log.
+
+### 4.6 Bench protocol *(new in v0.2)*
+
+Skill packs and operators SHOULD ship a **truth file** that pairs natural-language intents with the skill `id` an agent should retrieve for each. The format is JSONL or JSON-array, auto-detected by the first non-whitespace character (`[` ⇒ JSON array, otherwise JSONL):
+
+```jsonl
+# JSONL — one entry per line. Blank lines and lines starting with # are ignored.
+{"intent": "fetch the contents of a URL", "expected": "http-get"}
+{"intent": "encode a string as base64", "expected": "base64-encode"}
+```
+
+```json
+[
+  { "intent": "fetch the contents of a URL", "expected": "http-get" },
+  { "intent": "encode a string as base64", "expected": "base64-encode" }
+]
+```
+
+**Field semantics:**
+- `intent` — free-form natural language; one prompt per entry. (No upper bound; banks SHOULD accept entries up to at least 2 KB.)
+- `expected` — the **short** skill `id` (frontmatter `id`, e.g., `"http-get"`), NOT the full identity. Short ids make truth files portable across pack revisions; banks resolve them at run time and MUST fail fast if any `expected` doesn't resolve to exactly one installed skill.
+
+**Operator workflow:**
+
+A bank tool MAY implement a `bench <truth-file>` command that:
+1. Loads the truth file, fails fast on parse errors or unresolvable expecteds.
+2. For each entry, runs the bank's normal retrieval (same code path as a regular query).
+3. Reports top-1 / top-3 / top-K accuracy, mean top-1 score, mean margin (top-1 → top-2), and per-failure breakdown (intent, expected, rank, what was retrieved at top-1).
+4. Exits non-zero when any failure exists, so CI breaks on retrieval regression.
+
+**Recommended placement:** at the pack root as `bench-truth.jsonl`. Anyone consuming the pack can validate retrieval quality against their local provider with one command.
+
+**This is OPTIONAL.** Packs without a truth file are conformant; truth files are how publishers and consumers measure retrieval quality, not part of the loading pipeline.
+
+### 4.7 Embedding provider abstraction (informative) *(new in v0.2)*
+
+The spec is provider-agnostic: it requires that "the same model used to index skills is used to embed queries" (§4.3) but doesn't dictate which model. Implementations have converged on a small triplet for any provider:
+
+```
+EmbeddingProvider:
+  name : string         # stable identifier including the model
+                        # (e.g., "cloudflare:@cf/baai/bge-base-en-v1.5",
+                        #         "ollama:nomic-embed-text",
+                        #         "openai:text-embedding-3-small")
+  dim  : integer        # output vector dimensionality
+  embed : (text) → vec  # produces a `dim`-element vector
+```
+
+Banks SHOULD record `name` in their meta and refuse to mix vectors produced by different providers (`name` mismatch ⇒ rejected at sync time). The `dim` value is useful for early dim-mismatch detection at query time.
+
+Three reference provider classes documented in [`agent-skills-cli`](https://github.com/MauricioPerera/agent-skills-cli):
+
+- **Cloudflare Workers AI** — hosted, free tier available. Models: `@cf/baai/bge-{small,base,large}-en-v1.5` (384/768/1024-dim), `@cf/baai/bge-m3` (1024-dim, multilingual), `@cf/google/embeddinggemma-300m` (768-dim).
+- **Ollama** — local, zero-credentials, zero network egress. Models: `nomic-embed-text` (768-dim), `mxbai-embed-large` (1024-dim), `bge-m3` (1024-dim, multilingual), `embeddinggemma` (768-dim).
+- **OpenAI / OpenAI-compatible `/v1/embeddings`** — covers OpenAI, Together, Anyscale, Mistral, vLLM, infinity, TEI in compatibility mode, etc. via a shared base URL.
+
+The CLI documents the auto-detect priority and env-var conventions for each (informative, not part of the spec).
+
+The provider choice is a **local trust decision** for the bank operator. The spec does not impose a model; it imposes only that within one bank, indexing and query use the same model.
+
 ## 5. Identity, signing, and trust
 
 ### 5.1 Provenance verification levels
@@ -568,8 +664,12 @@ Banks MAY require one of these levels per subscription. **All levels still requi
 - **Level 0 (no verification)**: source URL is accepted as-is; no signature or hash check beyond URL conformance and HTTPS transport (which the spec assumes throughout). Suitable for development.
 - **Level 1 (TLS only)**: HTTPS chain validates the source domain. The bank refuses HTTP-only sources. Default for most consumers.
 - **Level 2 (commit pinning)**: `<ref>` MUST be a commit hash, not a tag. Tag pins are resolved to a hash by the bank, then re-stored as the hash; the original tag is preserved only as `ref_requested` for human readability.
-- **Level 3 (signed tags)**: the git tag MUST be signed by a key in `trusted_keys`. Verified via `git verify-tag` or equivalent. Implies Level 2.
+- **Level 3 (signed tags)**: the git tag MUST be signed and verifiable. Implies Level 2. Two verification methods are documented (banks MAY support either or both; see §5.3 for the trust trade-offs):
+  - **Level 3a (host-verified)**: the bank queries the source host's API and trusts its server-side GPG verification. For GitHub: `GET /repos/{owner}/{repo}/git/tags/{tag_sha}` returns a `verification` object with `verified: true/false` based on whether the tag's signature was made by a key bound to the publisher's account. Trust assumption: the bank trusts the host to have correctly bound signing keys to publisher identities.
+  - **Level 3b (client-verified)**: the bank verifies the tag signature locally with `git verify-tag` (or equivalent) against a `trusted_keys` allowlist on the subscription. The bank holds the canonical key fingerprints; the host is **not** in the trust path. Stronger guarantee than 3a, more operator burden.
 - **Level 4 (Sigstore + Rekor)**: signature MUST be present in the public Sigstore transparency log and not revoked. Implies Level 3.
+
+A bank operating at Level 3a SHOULD record the host's reason string (e.g., `"valid"`, `"unknown_key"`, `"unsigned"`) in `provenance.signature_status` so an operator can distinguish *""sloppy publisher hygiene""* (unsigned) from *""active red flag""* (signature present but unverifiable). The `signature_status` enumeration is `"valid" | "invalid" | "unsigned" | "unverified"`; the last value indicates the bank could not perform verification (non-supported host, lightweight tag with no tag object, ref is a raw SHA, etc.) and is **not** equivalent to "valid".
 
 Level 2+ banks REJECT subscriptions to server-hosted skills (§3.3), since those have no commit hashes. Server-hosted is feasible only at Levels 0–1.
 
@@ -578,6 +678,29 @@ Level 2+ banks REJECT subscriptions to server-hosted skills (§3.3), since those
 Banks SHOULD support trusted-key configuration. Implementation-specific format; an example is given in [`IMPLEMENTATION.md`](./IMPLEMENTATION.md).
 
 Banks MUST NOT auto-import keys. Adding a key is a deliberate user action. Banks SHOULD verify the key fingerprint matches a value the user explicitly provides (out-of-band trust establishment).
+
+### 5.3 Verification trust trade-offs *(new in v0.2)*
+
+The Level 3 split into 3a (host-verified) and 3b (client-verified) reflects a real operator trade-off, made explicit so banks document their choice rather than papering over it.
+
+**Level 3a — host-verified (e.g., GitHub's `verification` API):**
+- ✅ Zero operator burden: no key management, no GPG installation, no fingerprint distribution.
+- ✅ Works out of the box for any GitHub-hosted pack signed by a key the publisher uploaded to their GitHub account.
+- ❌ The host (GitHub) is in the trust path. A compromise of the host's key-binding system, or an account takeover that adds a new signing key, defeats verification.
+- **Adversary**: an attacker who compromises the publisher's GitHub account can upload their own signing key to that account and produce *""valid""* tags. Level 3a does not detect this.
+
+**Level 3b — client-verified (`git verify-tag` against `trusted_keys`):**
+- ✅ The host is **not** in the trust path. Even a fully compromised host cannot forge a `trusted_keys`-validated tag without also stealing the publisher's private key.
+- ✅ Strongest guarantee short of Sigstore + Rekor.
+- ❌ Operator burden: must establish key trust out-of-band (publisher's website, in-person, signed key party, etc.), maintain `trusted_keys`, rotate on compromise.
+- ❌ Doesn't catch an attacker who steals the publisher's private signing key (no system does, short of revocation).
+
+**Recommended posture by deployment type:**
+- Personal use, public packs: **3a is sufficient.** The marginal risk over 3b is small for low-stakes use.
+- Production agents, internal packs: **3b for first-party packs**, 3a for third-party. Pin `trusted_keys` in subscription records.
+- High-trust automation (financial, ops): **Level 4 (Sigstore + Rekor)** — adds a public, append-only audit log of every signature, detects key rotation against the transparency log.
+
+Banks SHOULD expose `signature_status` and `signed_by` on every retrieval result so the agent (or its supervisor) can decide per-call whether to act on a skill of a given trust level.
 
 ## 6. Versioning
 
