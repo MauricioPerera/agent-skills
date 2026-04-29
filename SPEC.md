@@ -1,11 +1,13 @@
 # agent-skills — Specification
 
-**Version**: 1.1.0
+**Version**: 1.2.0
 **Status**: **Stable.** The protocol surface — required SKILL.md fields, identity format, embedding text composition (§4.2), retrieval semantics (§4.3), audit format (§4.5), trust levels (§5) — is under semver. Breaking changes require a major spec bump (v2.0) with a 6-month deprecation window. Additive changes (new optional fields, new embedding providers, new trust-level subdivisions, new normative subsections) ship as minor bumps (v1.1, v1.2, …).
+
+**v1.2.0** adds §2.11 — **`filesystem` allowlist**. Sandboxed banks can now grant skills read-only access to declared host directories alongside `$AGENT_SCRATCH`. Closes the gap exposed by E2E testing of v1.1: skills like `read-file` and `ripgrep-search` were unusable in v2 sandboxed runtimes because the spec restricted FS to scratch-only. Mirrors the `network` allowlist precedent (§2.10). Bumps the SKILL.md schema to `"0.2"` for skills using the new field; `"0.1"` skills remain valid and unaffected.
 
 **v1.1.0** adds §3.4 — **pack-distributed CustomCommands**. Skills MAY ship a `command.js` factory alongside `SKILL.md` to extend the runtime beyond built-ins. Closes the gap that prevented v1 sandboxed banks from running skills that wrap host CLIs (`gh`, `aws`, `kubectl`, …). Reference CLI v2.1.0+ implements it.
 
-**Schema version** (the value embedded in `SKILL.md` files): still `"0.1"` — v1.0 retains the schema string from v0.x because the on-disk SKILL.md format is unchanged. The schema version increments only when the SKILL.md format itself gains a non-additive change. `"0.1"` and `"1.0"` would be different schemas if and only if the file format changes; today they refer to the same format.
+**Schema version** (the value embedded in `SKILL.md` files): `"0.1"` (baseline) or `"0.2"` (adds the optional `filesystem` field, §2.11). Banks MUST accept both. Skills MUST set `"0.2"` if they declare any 0.2-only field; otherwise `"0.1"` remains the recommended value for forward-compatible authoring.
 
 **Reference implementation**: [`@rckflr/agent-skills-cli`](https://www.npmjs.com/package/@rckflr/agent-skills-cli) v1.0.0+ tracks this spec at the STABLE tier per its own `STABILITY.md`. A second independent implementation (the [`agent-skills-py-proof`](https://github.com/MauricioPerera/agent-skills-py-proof) Python single-file proof) reproduces all retrieval and signature-detection numbers bit-for-bit, validating that the spec is sufficient for alternative implementations.
 
@@ -142,7 +144,7 @@ chains: [ ... ]
 
 | Field | Type | Constraints |
 |---|---|---|
-| `schema_version` | string | Spec version this skill targets. Currently `"0.1"`. |
+| `schema_version` | string | Spec version this skill targets. `"0.1"` (baseline) or `"0.2"` (adds `filesystem`, §2.11). Banks MUST accept both; skills MUST set `"0.2"` if they use any 0.2-only field. |
 | `id` | string | Stable identifier in publisher namespace. MUST match `^[a-z][a-z0-9_-]{0,63}$`. |
 | `version` | string | [Semver](https://semver.org/) MAJOR.MINOR.PATCH. |
 | `title` | string | Human name, ≤ 80 UTF-8 bytes. |
@@ -172,6 +174,7 @@ chains: [ ... ]
 | `required_env` | string[] | Env var **names** the skill REQUIRES to function (presence-checked at retrieval / pre-exec). **Values are never published.** |
 | `optional_env` | string[] | Env var names the skill MAY read but does not require. Used by sandboxed banks to determine the full env-access list (see §4.4). |
 | `network` | string[] | URL-prefix allowlist (§2.10). |
+| `filesystem` | string[] | Host filesystem path allowlist (§2.11). Read-only access to declared host directories, in addition to `$AGENT_SCRATCH`. Empty/absent = scratch only. Requires `schema_version: "0.2"`+. |
 | `applicable_when` | object | Conditions for the skill to be applicable (§2.7). |
 | `deprecates` | string[] | Identities of skills this version replaces. Banks SHOULD mark superseded skills as `deprecated: true` upon syncing. |
 | `migration_notes` | string | Markdown prose explaining migration. |
@@ -378,6 +381,39 @@ network:
 - Treat `network: ["*"]` as a literal entry (one wildcard URL); to permit any URL, the bank's policy SHOULD require an explicit unsafe-flag, not allow it via the spec.
 
 Banks not in sandbox mode SHOULD still log requests outside the allowlist as warnings.
+
+### 2.11 The `filesystem` allowlist
+
+Added in schema 0.2. Skills using this field MUST declare `schema_version: "0.2"` (or later); banks MUST refuse a `filesystem` field on a 0.1-versioned skill.
+
+```yaml
+schema_version: "0.2"
+filesystem:
+  - "/etc"
+  - "/var/log"
+  - "/home/user/projects/"
+```
+
+**Semantics**:
+
+- Each entry is a **host-absolute directory path**. Files within those directories become readable in the sandbox at the same virtual path.
+- Access is **read-only**. Writes still go to `$AGENT_SCRATCH` exclusively (§4.4).
+- Banks MAY canonicalize entries (resolve `..`, normalize trailing slashes) before mounting.
+- Banks MUST refuse non-absolute entries (`relative/path`), root (`/`) without an explicit unsafe-flag, and entries containing symlinks the bank cannot guarantee point inside the declared root.
+
+**Banks operating in sandbox mode** MUST:
+
+- Block any filesystem read whose absolute path does not match an entry in `filesystem` AND is not under `$AGENT_SCRATCH`.
+- Treat absence of `filesystem` as an empty allowlist (scratch-only — current §4.4 behaviour preserved).
+- Treat the entries as a **read** allowlist only — writes outside `$AGENT_SCRATCH` MUST be blocked even if the target is inside a `filesystem` entry.
+- Refuse `filesystem: ["/"]` unless the operator opts into an explicit unsafe-flag, mirroring the `network: ["*"]` rule.
+
+**Skill design guidance**:
+
+- Skills that operate on user-supplied paths (read-file, ripgrep-search, etc.) SHOULD declare the *minimum* directory tree they need. `filesystem: ["/etc", "/var/log"]` for a system-inspection skill is acceptable; `filesystem: ["/"]` is not, except for explicitly-marked unsafe skills.
+- Skills that produce or transform data the agent already holds (json-query, base64-encode) SHOULD NOT declare `filesystem` — they should accept the data via stdin or as an arg literal.
+
+**Non-sandboxed banks** — same trust-boundary documentation requirement as in §4.4 applies; if the bank does not enforce the filesystem allowlist, it MUST document that explicitly.
 
 ## 3. Discovery files
 
@@ -639,10 +675,11 @@ Given a skill identity and arg values, the bank MUST:
 5. Execute via the configured shell (`bash` by default).
 6. Capture `stdout`, `stderr`, exit code, elapsed time.
 
-A bank operating in sandbox mode (§2.10) MUST:
+A bank operating in sandbox mode (§§2.10, 2.11) MUST:
 
 - Intercept network calls and check against `network`.
-- Restrict filesystem to a per-skill scratch directory (`$AGENT_SCRATCH`).
+- Restrict filesystem **writes** to a per-skill scratch directory (`$AGENT_SCRATCH`). Writes outside scratch MUST be blocked, even into directories declared in `filesystem`.
+- Restrict filesystem **reads** to `$AGENT_SCRATCH` ∪ the directories enumerated in `filesystem` (§2.11). Skills with no `filesystem` field have scratch-only read access (preserves the pre-0.2 behaviour).
 - Prevent process spawning beyond `required_commands`.
 - Block access to env vars not in `required_env ∪ optional_env`. (`required_env` is the presence-required set; `optional_env` extends the read-access set without making them mandatory. A skill that does not declare any env access at all has zero env-var visibility under sandbox mode, even if such variables exist on the host.)
 
