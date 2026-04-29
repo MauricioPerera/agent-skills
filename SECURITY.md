@@ -57,6 +57,20 @@ Every change to a skill is a git commit:
 
 Consumers can compare any two SHAs they have observed and see the full history of changes between them. There is no "silently mutated" possibility.
 
+### P6: Sandbox is opt-out, not opt-in *(strengthened in spec v1.2)*
+
+A bank running in sandbox mode (per §4.4) MUST enforce three orthogonal allowlists declared by the skill. Each defaults to "deny" — silence in the SKILL.md = no access:
+
+- **`network`** (§2.10): URL prefix allowlist. Empty / missing = no HTTP at all.
+- **`filesystem`** (§2.11, new in spec v1.2): host-directory read allowlist. Empty / missing = the skill sees only its per-skill `$AGENT_SCRATCH` (writes) and nothing else (reads). Writes outside scratch MUST be rejected even if the target is inside a `filesystem` entry — the field is a *read* allowlist.
+- **`required_env ∪ optional_env`**: env var name allowlist. Skills that don't declare any env access have zero env-var visibility under sandbox mode.
+
+The result: a brand-new skill with empty allowlists can do bash arithmetic, write to scratch, and nothing else. Any wider blast radius requires explicit declaration by the pack author, visible in `git log`, reviewable by the operator before sync.
+
+**Why both `network` and `filesystem` matter**: the v1 spec covered only `network`. Skills like `read-file` and `ripgrep-search` could not be safely sandboxed at all — either they ran with full host FS (insecure) or they were unusable (the v2 sandboxes ran into this gap empirically). v1.2 closes the gap so the same author-driven, operator-reviewable allowlist mechanism that worked for HTTP also works for file reads.
+
+**The escape hatch is deliberate friction**: §2.11 explicitly forbids `filesystem: ["/"]` without an unsafe-flag, mirroring §2.10's `network: ["*"]` rule. Authors who need broad access have to *say so* in a way the operator notices.
+
 ## Threat model
 
 ### T1: Skill author publishes a malicious skill

@@ -2,6 +2,75 @@
 
 All notable changes to the `agent-skills` specification are documented here. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the spec adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.2.0] — 2026-04-29
+
+Additive minor. Adds the **filesystem allowlist** as the second sandbox primitive, mirroring `network`'s precedent.
+
+### New normative section
+
+- **§2.11 The `filesystem` allowlist** (NEW). Skills MAY declare `filesystem: ["/etc", "/var/log", …]` to obtain read-only access to host directories in addition to `$AGENT_SCRATCH`. Sandboxed banks MUST enforce a read/write split:
+  - reads: `$AGENT_SCRATCH ∪ filesystem`
+  - writes: `$AGENT_SCRATCH` only (writes inside `filesystem` entries MUST be rejected — the field is a *read* allowlist)
+
+  Skill-author guidance in §2.11 calls out: minimum-needed directory tree, no `["/"]` without explicit unsafe-flag (mirrors §2.10's `["*"]` rule).
+
+### Schema bump
+
+- **SKILL.md schema 0.1 → 0.2** (additive, opt-in). Skills using the `filesystem` field MUST declare `schema_version: "0.2"`. Banks MUST accept both `"0.1"` and `"0.2"`. Skills that don't use 0.2-only fields keep `"0.1"`.
+
+### §4.4 update
+
+- Execution contract clarified to enumerate the read/write split explicitly and cross-reference §2.11 alongside §2.10.
+
+### Why minor (not major)
+
+The new field is **optional**; existing v0.1 skills are unchanged. v1.2 banks MUST still accept v0.1 skills. v1.1 banks (no §2.11 enforcement) reject `filesystem` only because their schema-0.1 validator rejects unknown fields — the SPEC change itself is additive.
+
+### Status
+
+- Reference CLI: [`@rckflr/agent-skills-cli`](https://github.com/MauricioPerera/agent-skills-cli) **v2.2.0+** implements the runtime (MountableFs + read-only OverlayFs mounts via `buildSandboxFs`).
+- Reference pack: [`agent-skills-pack`](https://github.com/MauricioPerera/agent-skills-pack) **v2.2.0+** ships read-file v2.0.0 and ripgrep-search v2.0.0 with `filesystem: ["/etc", "/var", "/home", "/tmp", "/usr"]`.
+- Discovered via E2E testing of v1.1: pack skills like read-file and ripgrep-search were architecturally broken in v2 sandboxed runtimes because §4.4 restricted FS to scratch-only with no allowlist. v1.1 banks couldn't run them; v1.2 banks can.
+
+## [1.1.0] — 2026-04-29
+
+Additive minor. Adds the runtime-extension mechanism for skill packs.
+
+### New normative section
+
+- **§3.4 Pack-distributed CustomCommands** (NEW). Skills MAY ship a `command.js` ESM file alongside `SKILL.md` whose default export is a factory `({ defineCommand }) => Command`. Banks MUST fetch the factory at sync time, store it on the indexed skill, and register the produced Command on the just-bash runtime before executing `command_template`. The factory pattern (vs exporting the Command directly) avoids the bare specifier `"just-bash"` resolution problem when loading the source via `data:` URL.
+
+### Why this matters
+
+Closes the gap that prevented v1 sandboxed banks from running skills that wrap host CLIs (`gh`, `aws`, `kubectl`, …). Pre-1.1 the only option was a host-installed binary; under the v2 sandbox model that's unreachable. With v1.1, the pack ships the wrapper as JS, the bank loads it, the sandbox runs it — no host CLI needed.
+
+### Status
+
+- Reference CLI: **v2.1.0+** implements the loader (`loadCustomCommandFromSource`) with structured failure reasons (`LoadFailureReason` type) and stderr telemetry from exec.
+- Reference pack: **v2.1.0+** ships `github-issue-create` v2.0.0 with a CustomCommand that wraps the GitHub REST API directly via `$GH_TOKEN`.
+
+## [1.0.0] — 2026-04-29
+
+**Stability lock.** No content changes from v0.4.1 — what changes is the commitment.
+
+The protocol surface — required SKILL.md fields, identity format, embedding text composition (§4.2), retrieval semantics (§4.3), audit format (§4.5), trust levels (§5) — is now under semver. Breaking changes require a major bump (v2.0) with a 6-month deprecation window. Additive changes ship as minor bumps. Schema string `"0.1"` retained from v0.x because the SKILL.md format is bit-identical.
+
+Reference CLI [`@rckflr/agent-skills-cli`](https://github.com/MauricioPerera/agent-skills-cli) v1.0.0+ tracks this spec at the STABLE tier per its own `STABILITY.md`.
+
+## [0.4.1] — 2026-04-28
+
+Patch — clarifies §5.4.2 step 3.
+
+- **Gitsign Rekor lookup hash framing**: SignerInfo.SignedAttrs marshaled-for-verification per RFC 5652 §5.4. The reference CLI v0.17.1 ships `computeGitsignRekorLookupHash` + `findRekorEntryByHash`; the prior wording in step 3 was ambiguous about which set of bytes to hash.
+
+## [0.4.0] — 2026-04-28
+
+Additive minor. Formalises the **Level 4 client-side verification** interface in §5.4.
+
+The contract is specified end-to-end (Rekor inclusion proof + Fulcio chain + Sigstore identity claim). The reference impl ships the parsing primitives (CMS, Fulcio cert extension OIDs, gitsign lookup-hash framing) but parks the verification crypto for Phase 2 — implementation deferred indefinitely until a Sigstore-signing publisher appears in the agent-skills ecosystem. Until then, Level 3a (host-verified via the GitHub API) is the operational ceiling.
+
+Schema unchanged.
+
 ## [0.3.0] — 2026-04-28
 
 Additive specification update. **Schema version remains `"0.1"`** (no SKILL.md format changes); this document is bumped 0.2.0 → 0.3.0 to formalise the per-tenant audit + rerank pattern shipped in [`agent-skills-cli`](https://github.com/MauricioPerera/agent-skills-cli) v0.12.0. Existing v0.2.x banks and packs remain conformant.
