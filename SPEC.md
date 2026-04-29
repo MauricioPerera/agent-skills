@@ -1,7 +1,9 @@
 # agent-skills — Specification
 
-**Version**: 1.0.0
-**Status**: **Stable.** The protocol surface — required SKILL.md fields, identity format, embedding text composition (§4.2), retrieval semantics (§4.3), audit format (§4.5), trust levels (§5) — is now under semver. Breaking changes (renames or removals of required fields, semantics shifts that defang existing banks) require a major spec bump (v2.0) with a 6-month deprecation window and a migration entry. Additive changes (new optional fields, new embedding providers, new trust-level subdivisions, new normative subsections) ship as minor bumps (v1.1, v1.2, …).
+**Version**: 1.1.0
+**Status**: **Stable.** The protocol surface — required SKILL.md fields, identity format, embedding text composition (§4.2), retrieval semantics (§4.3), audit format (§4.5), trust levels (§5) — is under semver. Breaking changes require a major spec bump (v2.0) with a 6-month deprecation window. Additive changes (new optional fields, new embedding providers, new trust-level subdivisions, new normative subsections) ship as minor bumps (v1.1, v1.2, …).
+
+**v1.1.0** adds §3.4 — **pack-distributed CustomCommands**. Skills MAY ship a `command.js` factory alongside `SKILL.md` to extend the runtime beyond built-ins. Closes the gap that prevented v1 sandboxed banks from running skills that wrap host CLIs (`gh`, `aws`, `kubectl`, …). Reference CLI v2.1.0+ implements it.
 
 **Schema version** (the value embedded in `SKILL.md` files): still `"0.1"` — v1.0 retains the schema string from v0.x because the on-disk SKILL.md format is unchanged. The schema version increments only when the SKILL.md format itself gains a non-additive change. `"0.1"` and `"1.0"` would be different schemas if and only if the file format changes; today they refer to the same format.
 
@@ -453,6 +455,63 @@ This mode is **simpler to publish** but provides **weaker guarantees**:
 - Banks SHOULD only accept this mode at provenance Level 0 or 1 (§5.1).
 
 For production-grade skills, providers SHOULD host a git repository even if they only have one skill.
+
+### 3.4 Pack-distributed CustomCommands *(new in v1.1)*
+
+A skill MAY ship a `command.js` file alongside its `SKILL.md`. When present, banks operating on a sandboxed runtime (where `/bin/sh` is not reachable, e.g., the reference `just-bash` runtime) SHOULD load it on sync and register the resulting command before invoking `command_template`.
+
+**Layout** (per skill directory):
+
+```
+skills/<id>/
+├── SKILL.md       # spec §2
+└── command.js     # OPTIONAL — pack-distributed CustomCommand
+```
+
+**File contents** — ESM module whose default export is a **factory** function:
+
+```js
+// command.js
+export default ({ defineCommand }) =>
+  defineCommand("<command-name>", async (args, ctx) => {
+    // args : string[]   — substituted argv from command_template
+    // ctx  : CommandContext — runtime-provided env, fs, fetch, signal
+    // returns: { stdout: string, stderr: string, exitCode: number }
+    return { stdout: "...", stderr: "", exitCode: 0 };
+  });
+```
+
+The factory pattern (vs exporting a Command directly) is required because banks load `command.js` via dynamic import in contexts where bare specifiers (`import { defineCommand } from "just-bash"`) cannot be resolved (e.g., `data:` URLs in Node ESM). The bank injects the runtime's API surface as the factory's argument.
+
+**API surface** the factory receives — banks MUST provide at minimum:
+
+- `defineCommand(name, execute)` — equivalent to just-bash's helper, returns a Command shape `{ name, execute }` that the bank registers on its runtime.
+
+Banks MAY extend the API in minor revisions; consumers should treat additional fields as optional.
+
+**Discovery + fetch**:
+
+- The URL of `command.js` is derived from the skill's `SKILL.md` URL by replacing the trailing `/SKILL.md` with `/command.js`. Banks MAY follow the same `url_template` mechanism as `SKILL.md` (§3.2).
+- A `404` response is non-fatal: not every skill ships a CustomCommand. Skills that need only the runtime's built-ins (e.g., `curl` + `jq`) work without a `command.js`.
+
+**Trust + provenance**:
+
+- The signature on the git tag covers `command.js` automatically (it's part of the tree). Provenance Level 3a/3b verification thus extends to the CustomCommand source.
+- Banks MUST treat the executed factory as **trusted code** running in the bank's process. The factory has no further sandbox below the runtime's own (it IS the implementation of the runtime extension). Operators MUST review `command.js` content before approving sync — same trust posture as accepting an unfamiliar pack into your bank.
+
+**When to use it**:
+
+| skill needs | use `command.js`? |
+|---|---|
+| Just `curl` / `wget` + `jq` / `awk` / `grep` / `sed` | no — built-ins suffice |
+| `db` or `vec` (storage primitives per IMPLEMENTATION.md) | no — provided by the runtime |
+| Wraps a host CLI (`gh`, `aws`, `kubectl`, `psql`, …) | **yes** — the wrapper must be implemented as a CustomCommand because the sandbox does not expose `/bin/sh` |
+| Calls a third-party API with custom auth / signing | yes (or compose with built-in `curl` if the auth is a header / bearer token) |
+| Computes something locally (parsing, formatting, transformation) | yes if the logic exceeds what built-ins compose cleanly |
+
+**Implementations**:
+
+- Reference CLI [`@rckflr/agent-skills-cli`](https://www.npmjs.com/package/@rckflr/agent-skills-cli) v2.1.0+ implements pack-distributed CustomCommands. The loader uses `data:` URL imports + the factory injection pattern. Errors are non-fatal: a malformed `command.js` is logged and skipped; `command_template` falls back to whatever the runtime exposes natively.
 
 ## 4. Skill bank behavior
 
