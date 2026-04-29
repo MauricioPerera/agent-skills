@@ -1,19 +1,23 @@
 # agent-skills — Specification
 
-**Version**: 0.4.1 (draft)
-**Status**: Open for comment. Schema and protocol are subject to change before v1.0.0.
+**Version**: 1.0.0
+**Status**: **Stable.** The protocol surface — required SKILL.md fields, identity format, embedding text composition (§4.2), retrieval semantics (§4.3), audit format (§4.5), trust levels (§5) — is now under semver. Breaking changes (renames or removals of required fields, semantics shifts that defang existing banks) require a major spec bump (v2.0) with a 6-month deprecation window and a migration entry. Additive changes (new optional fields, new embedding providers, new trust-level subdivisions, new normative subsections) ship as minor bumps (v1.1, v1.2, …).
 
-**Schema version** (the value embedded in `SKILL.md` files): still `"0.1"` — v0.4.x patches are additive (no SKILL.md field changes). v0.2.x banks remain conformant.
+**Schema version** (the value embedded in `SKILL.md` files): still `"0.1"` — v1.0 retains the schema string from v0.x because the on-disk SKILL.md format is unchanged. The schema version increments only when the SKILL.md format itself gains a non-additive change. `"0.1"` and `"1.0"` would be different schemas if and only if the file format changes; today they refer to the same format.
 
-**v0.4.1** patches §5.4.2 step 3 to specify the **gitsign Rekor lookup hash framing**. The bytes that get SHA-256'd for `/api/v1/index/retrieve` are NOT the raw signed payload; they're the SignerInfo's SignedAttrs *marshaled for verification* per RFC 5652 §5.4 (the [0]-tagged signedAttrs re-encoded with SET tag 0x31, length and content unchanged). Reference CLI v0.17.1 ships `computeGitsignRekorLookupHash` + `findRekorEntryByHash`. Validated against the structural CMS invariant (messageDigest attribute inside SignedAttrs equals SHA-256 of the original payload); the live Rekor index lookup for our 2026-01 fixture currently returns empty, suggesting that entry is on a rotated/pruned shard — an open issue for future investigation.
+**Reference implementation**: [`@rckflr/agent-skills-cli`](https://www.npmjs.com/package/@rckflr/agent-skills-cli) v1.0.0+ tracks this spec at the STABLE tier per its own `STABILITY.md`. A second independent implementation (the [`agent-skills-py-proof`](https://github.com/MauricioPerera/agent-skills-py-proof) Python single-file proof) reproduces all retrieval and signature-detection numbers bit-for-bit, validating that the spec is sufficient for alternative implementations.
 
-**v0.4.0** formalized the **Level 4 client-side verification interface** in §5.4. The previous patches (v0.3.1 / v0.3.2 / v0.3.3) added optional fields *describing* what a bank had observed; v0.4.0 specifies what a bank operating at Level 4 must *do* to upgrade a `"sigstore"`-method tag from "host says invalid" to "client-verified valid" — the contract that resolves the Sigstore-on-host trap. The reference CLI v0.17.0 lands the parsing primitives (Rekor entry decoding, public-instance pinning); the verification primitives (inclusion-proof Merkle math, checkpoint signature, Fulcio chain) are queued for v0.18.
+**v1.0.0 captures the cumulative content of v0.4.1**: §1 identity, §2 SKILL.md format, §3 distribution model, §4 retrieval (rerank patterns, embedding providers, audit, bench protocol), §5 trust levels (Level 3a complete, Level 3b/4 specified). What changes at v1.0 is the **stability commitment**, not the document content.
 
-**v0.3.3** added an optional `provenance.signature_identity` field for `"sigstore"`-method tags (§5.1). The Fulcio cert's Subject Alternative Name (SAN) carries the OIDC subject (email or workflow URI) and Fulcio extension OID `1.3.6.1.4.1.57264.1.1` (or `.1.8`) carries the OIDC issuer. Banks SHOULD surface both. The reference CLI v0.16.0 ships extraction (cross-impl parity validated continuously). **Extraction is not verification**: the identity is what the cert *claims*; verifying the claim against Rekor is Level 4 work and remains queued.
-
-**v0.3.2** widened `provenance.signature_method` to `"gpg" | "ssh" | "sigstore"` (§5.1). The reference CLI v0.15.0 ships SSH-tag detection. The same patch documents the **Sigstore-on-host trap**: a properly-signed Sigstore tag may legitimately receive a `bad_cert` verdict from the host once the short-lived Fulcio cert expires, so a `"sigstore"`-method tag with `status: "invalid"` is **ambiguous** without client-side Rekor verification (Level 4) — *not* equivalent to "forged".
-
-**v0.3.1** added an optional `provenance.signature_method` field to §5.1 (gpg / sigstore detection); the reference CLI v0.14.0 shipped it. Spec patch only — the value is informative on top of the existing Level 3a verdict. Full Sigstore Level 4 verification (Rekor inclusion proof) is queued for a future revision.
+**Pre-1.0 history (compressed):**
+- **v0.4.1** patched §5.4.2 step 3 with the **gitsign Rekor lookup hash framing** (SignerInfo.SignedAttrs marshaled-for-verification per RFC 5652 §5.4). Reference CLI v0.17.1 ships `computeGitsignRekorLookupHash` + `findRekorEntryByHash`.
+- **v0.4.0** formalized the **Level 4 client-side verification interface** in §5.4. The contract is specified; the reference impl ships the parsing primitives but not the verification crypto (Phase 2 — implementation deferred indefinitely until a Sigstore-signing publisher appears in the agent-skills ecosystem; until then, Level 3a is the operational ceiling).
+- **v0.3.3** added optional `provenance.signature_identity` field for `"sigstore"`-method tags. CLI v0.16.0 ships extraction.
+- **v0.3.2** widened `provenance.signature_method` to `"gpg" | "ssh" | "sigstore"`; documented the **Sigstore-on-host trap** (Fulcio cert expiry yielding misleading `bad_cert` verdicts).
+- **v0.3.1** added optional `provenance.signature_method` field with structural detection (gpg / sigstore).
+- **v0.3.0** added per-tenant audit scoping (§4.5.1).
+- **v0.2.0** added rerank patterns (§4.3.1), embedding provider abstraction (§4.7), bench protocol (§4.6), Level 3a/3b split (§5.1).
+- **v0.1.0** initial specification — identity, SKILL.md format, distribution, retrieval, audit, trust levels.
 
 This document defines a **format and a protocol**. It does not define a runtime, a storage backend, or a UI. Conformant implementations MAY be built atop any sufficient infrastructure (filesystem + vector index + shell). One reference runtime is described in [`IMPLEMENTATION.md`](./IMPLEMENTATION.md), but the spec itself is implementation-agnostic.
 
