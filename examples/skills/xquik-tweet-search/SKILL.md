@@ -11,7 +11,7 @@ args:
   query:
     type: string
     description: "X search query, such as a keyword, hashtag, username, or supported X search operator"
-    pattern: "^[^\\n\\r]{1,240}$"
+    pattern: "^.{1,240}$"
   limit:
     type: integer
     description: "maximum number of posts to return"
