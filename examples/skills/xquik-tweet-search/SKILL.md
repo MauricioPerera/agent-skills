@@ -5,7 +5,7 @@ version: "1.0.0"
 title: "Search X posts via Xquik"
 description: "Searches public X posts through the Xquik REST API using a query string and result limit. Reads the API key from the shell environment so it never reaches the LLM context."
 use_when: "the user wants to search public X posts by keyword, hashtag, username, or advanced X search operator through Xquik"
-command_template: "python3 -c 'import os, sys, urllib.parse, urllib.request; query=sys.argv[1]; limit=sys.argv[2]; url=\"https://xquik.com/api/v1/x/tweets/search?\" + urllib.parse.urlencode({\"q\": query, \"limit\": limit}); req=urllib.request.Request(url, headers={\"X-API-Key\": os.environ[\"XQUIK_API_KEY\"]}); print(urllib.request.urlopen(req, timeout=30).read().decode())' {query} {limit}"
+command_template: "python3 -c 'import json, os, sys, urllib.parse, urllib.request; query=sys.argv[1]; limit=int(sys.argv[2]); url=\"https://xquik.com/api/v1/x/tweets/search?\" + urllib.parse.urlencode({\"q\": query, \"limit\": limit}); req=urllib.request.Request(url, headers={\"X-API-Key\": os.environ[\"XQUIK_API_KEY\"]}); payload=json.loads(urllib.request.urlopen(req, timeout=30).read().decode()); print(json.dumps({\"source\":\"xquik\",\"endpoint\":\"GET /api/v1/x/tweets/search\",\"query\":query,\"limit\":limit,\"data\":payload}, ensure_ascii=False))' {query} {limit}"
 
 args:
   query:
@@ -41,9 +41,9 @@ applicable_when:
 
 examples:
   - intent: "Find recent public posts about AI agents"
-    command: "python3 -c 'import os, sys, urllib.parse, urllib.request; query=sys.argv[1]; limit=sys.argv[2]; url=\"https://xquik.com/api/v1/x/tweets/search?\" + urllib.parse.urlencode({\"q\": query, \"limit\": limit}); req=urllib.request.Request(url, headers={\"X-API-Key\": os.environ[\"XQUIK_API_KEY\"]}); print(urllib.request.urlopen(req, timeout=30).read().decode())' 'AI agents' 10"
+    command: "python3 -c 'import json, os, sys, urllib.parse, urllib.request; query=sys.argv[1]; limit=int(sys.argv[2]); url=\"https://xquik.com/api/v1/x/tweets/search?\" + urllib.parse.urlencode({\"q\": query, \"limit\": limit}); req=urllib.request.Request(url, headers={\"X-API-Key\": os.environ[\"XQUIK_API_KEY\"]}); payload=json.loads(urllib.request.urlopen(req, timeout=30).read().decode()); print(json.dumps({\"source\":\"xquik\",\"endpoint\":\"GET /api/v1/x/tweets/search\",\"query\":query,\"limit\":limit,\"data\":payload}, ensure_ascii=False))' 'AI agents' 10"
   - intent: "Search hashtag posts for a launch"
-    command: "python3 -c 'import os, sys, urllib.parse, urllib.request; query=sys.argv[1]; limit=sys.argv[2]; url=\"https://xquik.com/api/v1/x/tweets/search?\" + urllib.parse.urlencode({\"q\": query, \"limit\": limit}); req=urllib.request.Request(url, headers={\"X-API-Key\": os.environ[\"XQUIK_API_KEY\"]}); print(urllib.request.urlopen(req, timeout=30).read().decode())' '#launch' 25"
+    command: "python3 -c 'import json, os, sys, urllib.parse, urllib.request; query=sys.argv[1]; limit=int(sys.argv[2]); url=\"https://xquik.com/api/v1/x/tweets/search?\" + urllib.parse.urlencode({\"q\": query, \"limit\": limit}); req=urllib.request.Request(url, headers={\"X-API-Key\": os.environ[\"XQUIK_API_KEY\"]}); payload=json.loads(urllib.request.urlopen(req, timeout=30).read().decode()); print(json.dumps({\"source\":\"xquik\",\"endpoint\":\"GET /api/v1/x/tweets/search\",\"query\":query,\"limit\":limit,\"data\":payload}, ensure_ascii=False))' '#launch' 25"
 ---
 
 # Xquik Tweet Search
@@ -73,7 +73,8 @@ limits validated before execution.
 
 ## Output
 
-Stdout: the JSON response from `GET /api/v1/x/tweets/search`.
+Stdout: a JSON envelope with the source, endpoint, query, limit, and response
+data from `GET /api/v1/x/tweets/search`.
 
 See the full Xquik skill and API docs for broader workflows:
 
